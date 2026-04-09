@@ -1,0 +1,26 @@
+{
+  "short_name": "Chattrix",
+  "name": "Chattrix Chat Application",
+  "icons": [
+    {
+      "src": "chattrix-logo.ico.svg",
+      "sizes": "128x128",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "logo192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "logo512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#0f4fb8",
+  "background_color": "#f4f0f3"
+}

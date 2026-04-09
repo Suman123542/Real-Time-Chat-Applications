@@ -1,0 +1,16 @@
+<svg width="720" height="320" viewBox="0 0 720 320" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <g stroke="#0F4FB8" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M247 79C188 79 141 118 141 166C141 183 147 199 159 212L143 239L177 225C196 235 220 241 247 241C308 241 357 202 357 154C357 108 308 79 247 79Z"/>
+    <path d="M430 47C486 47 534 84 544 131C554 178 519 221 466 234L473 264L442 243C434 244 427 245 419 245C370 245 327 221 309 185"/>
+    <path d="M194 126C205 112 221 106 240 106C267 106 288 124 288 148C288 164 280 176 264 185C248 194 244 205 244 220"/>
+    <circle cx="244" cy="242" r="8" fill="#0F4FB8" stroke="none"/>
+    <ellipse cx="424" cy="171" rx="10" ry="9"/>
+    <ellipse cx="465" cy="159" rx="10" ry="9"/>
+    <ellipse cx="507" cy="149" rx="10" ry="9"/>
+    <path d="M184 138C172 151 170 180 184 196"/>
+    <path d="M527 102C540 118 545 151 538 177"/>
+    <circle cx="208" cy="98" r="4" fill="#0F4FB8" stroke="none"/>
+    <circle cx="567" cy="185" r="4" fill="#0F4FB8" stroke="none"/>
+  </g>
+  <text x="360" y="311" text-anchor="middle" fill="#0F4FB8" font-family="Arial, Helvetica, sans-serif" font-size="78" font-weight="800">Chattrix</text>
+</svg>
