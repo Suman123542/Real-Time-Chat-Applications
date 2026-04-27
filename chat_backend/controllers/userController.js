@@ -215,10 +215,10 @@ export const signup = async (req, res) => {
         }
 
         const existingUser = await findUserByEmail(email);
-        if (existingUser?.isEmailVerified) {
+        if (existingUser?.isEmailVerified && existingUser?.isMobileVerified) {
             return res.status(400).json({ message: "User already exists" });
         }
-        if (existingUser && !existingUser.isEmailVerified) {
+        if (existingUser && (!existingUser.isEmailVerified || !existingUser.isMobileVerified)) {
             const now = new Date();
             const emailOtpActive = Boolean(
                 existingUser.emailVerificationCode &&
@@ -249,17 +249,19 @@ export const signup = async (req, res) => {
         const profilePicUrl = existingUser?.profilePic || await prepareProfilePic(profilePic);
 
         const user = existingUser || new User({ email });
+        const previousEmail = existingUser?.email;
+        const previousMobile = existingUser?.mobile;
         user.name = name.trim();
         user.email = email;
         user.mobile = mobile;
         user.password = hashedPassword;
         user.profilePic = profilePicUrl;
         user.bio = bio || existingUser?.bio || "";
-        user.isEmailVerified = false;
-        user.isMobileVerified = false;
+        user.isEmailVerified = Boolean(existingUser?.isEmailVerified && normalizeEmail(previousEmail) === email);
+        user.isMobileVerified = Boolean(existingUser?.isMobileVerified && normalizeMobile(previousMobile) === mobile);
 
-        const emailResult = await issueAndSendEmailOtp(user);
-        const mobileResult = await issueAndSendMobileOtp(user);
+        const emailResult = user.isEmailVerified ? null : await issueAndSendEmailOtp(user);
+        const mobileResult = user.isMobileVerified ? null : await issueAndSendMobileOtp(user);
 
         return res.status(200).json({
             ...buildVerificationResponse({ emailResult, mobileResult }),
@@ -629,6 +631,20 @@ export const login = async (req, res) => {
         if (!isPasswordValid) {
             return res.status(400).json({ message: "Invalid credentials" });
         }
+
+        if (!user.isEmailVerified || !user.isMobileVerified) {
+            const emailResult = user.isEmailVerified ? null : await issueAndSendEmailOtp(user);
+            const mobileResult = user.isMobileVerified ? null : await issueAndSendMobileOtp(user);
+
+            return res.status(403).json({
+                ...buildVerificationResponse({ emailResult, mobileResult }),
+                email: user.email,
+                mobile: user.mobile,
+                emailVerified: Boolean(user.isEmailVerified),
+                mobileVerified: Boolean(user.isMobileVerified),
+            });
+        }
+
         const token = generateToken(user._id);
         return res.status(200).json({ user: sanitizeUser(user), token, message: "Login successful" });
     } catch (error) {

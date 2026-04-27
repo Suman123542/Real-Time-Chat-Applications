@@ -1,11 +1,10 @@
 import React, { useContext, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { AuthContext } from "../context/AuthContext";
 import chattrixLogo from "../image/chattrix-logo.svg";
 import loginArtwork from "../image/images (2).jpeg";
 
 function ForgotPassword() {
-  const navigate = useNavigate();
   const {
     requestPasswordResetLink,
   } = useContext(AuthContext);

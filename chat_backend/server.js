@@ -112,7 +112,12 @@ const __dirname = path.dirname(__filename);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // connect to database
-await connectDB();
+try {
+  await connectDB();
+} catch (err) {
+  console.error("Failed to start server due to database error.");
+  process.exit(1);
+}
 
 // routes setup
 app.use('/api/auth', userRouter);

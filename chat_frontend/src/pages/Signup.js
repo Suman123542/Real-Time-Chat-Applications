@@ -7,6 +7,7 @@ import chattrixLogo from "../image/chattrix-logo.svg";
 function Signup() {
   const location = useLocation();
   const verificationState = location.state || {};
+  const showDevOtps = process.env.NODE_ENV !== "production";
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [mobile, setMobile] = useState("");
@@ -17,9 +18,11 @@ function Signup() {
   const [mobileOtp, setMobileOtp] = useState("");
   const [pendingEmail, setPendingEmail] = useState(verificationState.email || "");
   const [pendingMobile, setPendingMobile] = useState(verificationState.mobile || "");
-  const [devOtp, setDevOtp] = useState(verificationState.devOtp || "");
+  const [devOtp, setDevOtp] = useState(verificationState.devEmailOtp || verificationState.devOtp || "");
   const [devMobileOtp, setDevMobileOtp] = useState(verificationState.devMobileOtp || "");
   const [verificationStep, setVerificationStep] = useState(Boolean(verificationState.startVerification));
+  const [emailVerified, setEmailVerified] = useState(Boolean(verificationState.emailVerified));
+  const [mobileVerified, setMobileVerified] = useState(Boolean(verificationState.mobileVerified));
   const [info, setInfo] = useState(verificationState.info || "");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -47,6 +50,8 @@ function Signup() {
     setInfo("");
     setDevOtp("");
     setDevMobileOtp("");
+    setEmailVerified(false);
+    setMobileVerified(false);
     setBusy(true);
 
     try {
@@ -60,7 +65,7 @@ function Signup() {
       setPendingMobile(result.mobile || mobile);
       setVerificationStep(true);
       setInfo(result.message || "A verification code has been sent to your email.");
-      setDevOtp(result.devOtp || "");
+      setDevOtp(result.devEmailOtp || result.devOtp || "");
       setDevMobileOtp(result.devMobileOtp || "");
     } catch (err) {
       setError(err.message || "Signup failed");
@@ -77,8 +82,16 @@ function Signup() {
     setBusy(true);
 
     try {
-      await verifyEmailOtp(pendingEmail, otp);
-      navigate("/chat");
+      const result = await verifyEmailOtp(pendingEmail, otp);
+      setEmailVerified(true);
+      setOtp("");
+
+      if (result?.token) {
+        navigate("/chat");
+        return;
+      }
+
+      setInfo(result?.message || "Email verified. Please verify your phone.");
     } catch (err) {
       setError(err.message || "Verification failed");
     } finally {
@@ -94,8 +107,16 @@ function Signup() {
     setBusy(true);
 
     try {
-      await verifyMobileOtp(pendingMobile, mobileOtp);
-      navigate("/chat");
+      const result = await verifyMobileOtp(pendingMobile, mobileOtp);
+      setMobileVerified(true);
+      setMobileOtp("");
+
+      if (result?.token) {
+        navigate("/chat");
+        return;
+      }
+
+      setInfo(result?.message || "Phone verified. Please verify your email.");
     } catch (err) {
       setError(err.message || "Verification failed");
     } finally {
@@ -112,7 +133,7 @@ function Signup() {
     try {
       const result = await resendVerificationOtp(pendingEmail);
       setInfo(result.message || "A new verification code has been sent to your email.");
-      setDevOtp(result.devOtp || "");
+      setDevOtp(result.devEmailOtp || result.devOtp || "");
     } catch (err) {
       setError(err.message || "Unable to resend code");
     } finally {
@@ -154,7 +175,7 @@ function Signup() {
         </section>
 
         <section className="signup-panel">
-          <h3 className="signup-panel-title">{verificationStep ? "Verify Email" : "Signup"}</h3>
+          <h3 className="signup-panel-title">{verificationStep ? "Verify Your Account" : "Signup"}</h3>
 
           {error && (
             <div className="alert alert-danger text-center signup-error">
@@ -168,12 +189,12 @@ function Signup() {
             </div>
           )}
 
-          {devOtp && (
+          {showDevOtps && devOtp && (
             <div className="alert alert-warning text-center signup-error">
-              Development OTP: <strong>{devOtp}</strong>
+              Development Email OTP: <strong>{devOtp}</strong>
             </div>
           )}
-          {devMobileOtp && (
+          {showDevOtps && devMobileOtp && (
             <div className="alert alert-warning text-center signup-error">
               Development Phone OTP: <strong>{devMobileOtp}</strong>
             </div>
@@ -249,57 +270,65 @@ function Signup() {
             </form>
           ) : (
             <>
-              <form onSubmit={handleVerify} className="signup-form">
-                <div className="signup-helper-text">
-                  Enter the 6-digit code sent to <strong>{pendingEmail}</strong>
-                </div>
+              {emailVerified ? (
+                <div className="alert alert-success text-center signup-error">Email verified.</div>
+              ) : (
+                <form onSubmit={handleVerify} className="signup-form">
+                  <div className="signup-helper-text">
+                    Enter the 6-digit code sent to <strong>{pendingEmail}</strong>
+                  </div>
 
-                <input
-                  type="text"
-                  className="signup-input"
-                  placeholder="Email OTP"
-                  inputMode="numeric"
-                  pattern="[0-9]{6}"
-                  maxLength={6}
-                  required
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                />
+                  <input
+                    type="text"
+                    className="signup-input"
+                    placeholder="Email OTP"
+                    inputMode="numeric"
+                    pattern="[0-9]{6}"
+                    maxLength={6}
+                    required
+                    value={otp}
+                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  />
 
-                <button className="signup-submit" type="submit">
-                  {busy ? "Verifying..." : "Verify Email"}
-                </button>
+                  <button className="signup-submit" type="submit">
+                    {busy ? "Verifying..." : "Verify Email"}
+                  </button>
 
-                <button className="signup-secondary-btn" type="button" onClick={handleResend} disabled={busy}>
-                  {busy ? "Please wait..." : "Resend Email Code"}
-                </button>
-              </form>
+                  <button className="signup-secondary-btn" type="button" onClick={handleResend} disabled={busy}>
+                    {busy ? "Please wait..." : "Resend Email Code"}
+                  </button>
+                </form>
+              )}
 
-              <form onSubmit={handleVerifyMobile} className="signup-form">
-                <div className="signup-helper-text">
-                  Enter the 6-digit code sent to <strong>{pendingMobile}</strong>
-                </div>
+              {mobileVerified ? (
+                <div className="alert alert-success text-center signup-error">Phone verified.</div>
+              ) : (
+                <form onSubmit={handleVerifyMobile} className="signup-form">
+                  <div className="signup-helper-text">
+                    Enter the 6-digit code sent to <strong>{pendingMobile}</strong>
+                  </div>
 
-                <input
-                  type="text"
-                  className="signup-input"
-                  placeholder="Phone OTP"
-                  inputMode="numeric"
-                  pattern="[0-9]{6}"
-                  maxLength={6}
-                  required
-                  value={mobileOtp}
-                  onChange={(e) => setMobileOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                />
+                  <input
+                    type="text"
+                    className="signup-input"
+                    placeholder="Phone OTP"
+                    inputMode="numeric"
+                    pattern="[0-9]{6}"
+                    maxLength={6}
+                    required
+                    value={mobileOtp}
+                    onChange={(e) => setMobileOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  />
 
-                <button className="signup-submit" type="submit">
-                  {busy ? "Verifying..." : "Verify Phone"}
-                </button>
+                  <button className="signup-submit" type="submit">
+                    {busy ? "Verifying..." : "Verify Phone"}
+                  </button>
 
-                <button className="signup-secondary-btn" type="button" onClick={handleResendMobile} disabled={busy}>
-                  {busy ? "Please wait..." : "Resend Phone Code"}
-                </button>
-              </form>
+                  <button className="signup-secondary-btn" type="button" onClick={handleResendMobile} disabled={busy}>
+                    {busy ? "Please wait..." : "Resend Phone Code"}
+                  </button>
+                </form>
+              )}
             </>
           )}
 

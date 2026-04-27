@@ -37,7 +37,8 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     const savedToken = localStorage.getItem("token");
-    if (!savedToken) {
+    if (!savedToken || savedToken === "null" || savedToken === "undefined") {
+      localStorage.removeItem("token");
       setLoading(false);
       return;
     }
@@ -112,10 +113,17 @@ export const AuthProvider = ({ children }) => {
     }
 
     setUser(data.user);
-    setToken(data.token);
-    localStorage.setItem("token", data.token);
-    await fetchUsers(data.token);
-    return true;
+
+    if (data.token) {
+      setToken(data.token);
+      localStorage.setItem("token", data.token);
+      await fetchUsers(data.token);
+    } else {
+      setToken(null);
+      localStorage.removeItem("token");
+    }
+
+    return data;
   }, [fetchUsers]);
 
   const verifyMobileOtp = useCallback(async (mobile, otp) => {
@@ -133,10 +141,17 @@ export const AuthProvider = ({ children }) => {
     }
 
     setUser(data.user);
-    setToken(data.token);
-    localStorage.setItem("token", data.token);
-    await fetchUsers(data.token);
-    return true;
+
+    if (data.token) {
+      setToken(data.token);
+      localStorage.setItem("token", data.token);
+      await fetchUsers(data.token);
+    } else {
+      setToken(null);
+      localStorage.removeItem("token");
+    }
+
+    return data;
   }, [fetchUsers]);
 
   const resendVerificationOtp = useCallback(async (email) => {
@@ -284,7 +299,11 @@ export const AuthProvider = ({ children }) => {
       const err = new Error(data.message || "Login failed");
       err.requiresVerification = Boolean(data.requiresVerification);
       err.email = data.email || normalizedEmail;
-      err.devOtp = data.devOtp || "";
+      err.mobile = data.mobile || "";
+      err.emailVerified = Boolean(data.emailVerified);
+      err.mobileVerified = Boolean(data.mobileVerified);
+      err.devEmailOtp = data.devEmailOtp || data.devOtp || "";
+      err.devMobileOtp = data.devMobileOtp || "";
       throw err;
     }
 

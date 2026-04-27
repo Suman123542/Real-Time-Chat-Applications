@@ -17,6 +17,16 @@ export const protectRoute = async(req, res, next) => {
         if(!user){
             return res.status(401).json({message: "Unauthorized"});
         }
+        if (!user.isEmailVerified || !user.isMobileVerified) {
+            return res.status(403).json({
+                message: "Account verification required",
+                requiresVerification: true,
+                email: user.email,
+                mobile: user.mobile,
+                emailVerified: Boolean(user.isEmailVerified),
+                mobileVerified: Boolean(user.isMobileVerified),
+            });
+        }
         req.user = user;
         next();
     } catch (error) {
