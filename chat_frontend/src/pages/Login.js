@@ -82,6 +82,8 @@ function Login() {
               className="login-input"
               placeholder="Email"
               required
+              autoComplete="email"
+              value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
 
@@ -90,6 +92,8 @@ function Login() {
               className="login-input"
               placeholder="Password"
               required
+              autoComplete="current-password"
+              value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
 

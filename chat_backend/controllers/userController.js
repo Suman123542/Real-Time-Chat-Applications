@@ -31,6 +31,20 @@ const isValidEmail = (value = "") => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(va
 const createOtp = () => String(randomInt(100000, 1000000));
 const hashOtp = (otp) => createHash("sha256").update(String(otp)).digest("hex");
 
+const escapeRegex = (value = "") => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const findUserByEmail = async (email) => {
+    // Allow case-insensitive lookup for older records that may have stored mixed-case emails.
+    const normalizedEmail = normalizeEmail(email);
+
+    const collationMatch = await User.findOne({ email: normalizedEmail }).collation({ locale: "en", strength: 2 });
+    if (collationMatch) return collationMatch;
+
+    // Fallback for environments where collation matching is not behaving as expected.
+    const emailRegex = `^${escapeRegex(normalizedEmail)}$`;
+    return User.findOne({ email: { $regex: emailRegex, $options: "i" } });
+};
+
 const sanitizeUser = (userDoc) => {
     const user = userDoc?.toObject ? userDoc.toObject() : { ...userDoc };
     delete user.password;
@@ -196,11 +210,11 @@ export const signup = async (req, res) => {
         }
 
         const existingMobileUser = await User.findOne({ mobile });
-        if (existingMobileUser && existingMobileUser.email !== email) {
+        if (existingMobileUser && normalizeEmail(existingMobileUser.email) !== email) {
             return res.status(400).json({ message: "Mobile number already in use" });
         }
 
-        const existingUser = await User.findOne({ email });
+        const existingUser = await findUserByEmail(email);
         if (existingUser?.isEmailVerified) {
             return res.status(400).json({ message: "User already exists" });
         }
@@ -270,7 +284,7 @@ export const verifyEmailOtp = async (req, res) => {
             return res.status(400).json({ message: "Enter a valid email address" });
         }
 
-        const user = await User.findOne({ email });
+        const user = await findUserByEmail(email);
         if (!user) {
             return res.status(404).json({ message: "User not found" });
         }
@@ -395,7 +409,7 @@ export const resendVerificationOtp = async (req, res) => {
             return res.status(400).json({ message: "Enter a valid email address" });
         }
 
-        const user = await User.findOne({ email });
+        const user = await findUserByEmail(email);
         if (!user) {
             return res.status(404).json({ message: "User not found" });
         }
@@ -463,7 +477,7 @@ export const requestPasswordResetOtp = async (req, res) => {
             return res.status(400).json({ message: "Enter a valid email address" });
         }
 
-        const user = await User.findOne({ email });
+        const user = await findUserByEmail(email);
         if (!user) {
             return res.status(404).json({ message: "User not found" });
         }
@@ -498,7 +512,7 @@ export const resendPasswordResetOtp = async (req, res) => {
             return res.status(400).json({ message: "Enter a valid email address" });
         }
 
-        const user = await User.findOne({ email });
+        const user = await findUserByEmail(email);
         if (!user) {
             return res.status(404).json({ message: "User not found" });
         }
@@ -534,7 +548,7 @@ export const verifyPasswordResetOtp = async (req, res) => {
             return res.status(400).json({ message: "Enter a valid email address" });
         }
 
-        const user = await User.findOne({ email });
+        const user = await findUserByEmail(email);
         if (!user) {
             return res.status(404).json({ message: "User not found" });
         }
@@ -567,7 +581,7 @@ export const resetPassword = async (req, res) => {
             return res.status(400).json({ message: "Password must be at least 6 characters long" });
         }
 
-        const user = await User.findOne({ email });
+        const user = await findUserByEmail(email);
         if (!user) {
             return res.status(404).json({ message: "User not found" });
         }
@@ -601,11 +615,17 @@ export const login = async (req, res) => {
         if (!isValidEmail(email)) {
             return res.status(400).json({ message: "Enter a valid email address" });
         }
-        const user = await User.findOne({ email });
+        const user = await findUserByEmail(email);
         if (!user) {
             return res.status(400).json({ message: "Invalid credentials" });
         }
-        const isPasswordValid = await argon2.verify(user.password, password);
+        let isPasswordValid = false;
+        try {
+            isPasswordValid = await argon2.verify(user.password, String(password));
+        } catch (verifyErr) {
+            console.warn("Password verification failed:", verifyErr?.message || verifyErr);
+            isPasswordValid = false;
+        }
         if (!isPasswordValid) {
             return res.status(400).json({ message: "Invalid credentials" });
         }
@@ -708,7 +728,7 @@ export const requestPasswordResetLink = async (req, res) => {
             return res.status(400).json({ message: "Enter a valid email address" });
         }
 
-        const user = await User.findOne({ email });
+        const user = await findUserByEmail(email);
         if (!user) {
             return res.status(404).json({ message: "User not found" });
         }
