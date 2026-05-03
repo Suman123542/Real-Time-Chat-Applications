@@ -10,7 +10,14 @@ import { isSmsConfigured, sendVerificationSms } from "../lib/sms.js";
 import { io, userSocketMap } from "../server.js";
 
 const VERIFICATION_TTL_MS = 10 * 60 * 1000;
-const showDevOtp = process.env.NODE_ENV !== "production";
+const truthy = (value) => {
+    const normalized = String(value ?? "").trim().toLowerCase();
+    return ["1", "true", "yes", "y", "on"].includes(normalized);
+};
+
+const showDevOtp = process.env.SHOW_DEV_OTP != null
+    ? truthy(process.env.SHOW_DEV_OTP)
+    : process.env.NODE_ENV !== "production";
 
 const parseBase64Image = (value = "") => {
     const match = String(value).match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
