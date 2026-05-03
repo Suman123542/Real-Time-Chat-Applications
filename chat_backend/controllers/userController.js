@@ -1,4 +1,5 @@
 import { randomBytes, randomInt, createHash } from "crypto";
+import mongoose from "mongoose";
 import { generateToken } from "../lib/utils.js";
 import User from "../models/User.js";
 import argon2 from "argon2";
@@ -849,6 +850,15 @@ export const getCommsHealth = async (req, res) => {
         emailConfigured: Boolean(isEmailTransportConfigured),
         smsConfigured: Boolean(isSmsConfigured),
         environment: process.env.NODE_ENV || "development",
+    });
+};
+
+export const getDbHealth = async (req, res) => {
+    const conn = mongoose.connection;
+    return res.status(200).json({
+        readyState: conn.readyState, // 0=disconnected, 1=connected, 2=connecting, 3=disconnecting
+        dbName: conn.name || null,
+        host: conn.host || null,
     });
 };
 

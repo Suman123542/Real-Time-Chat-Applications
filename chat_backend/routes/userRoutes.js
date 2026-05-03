@@ -11,6 +11,7 @@ import {
   resendMobileVerificationOtp,
   sendTestOtps,
   getCommsHealth,
+  getDbHealth,
   resetPassword,
   resetPasswordWithToken,
   signup,
@@ -36,6 +37,7 @@ userRouter.post('/forgot-password/resend', resendPasswordResetOtp);
 userRouter.post('/verify-reset-otp', verifyPasswordResetOtp);
 userRouter.post('/test-otp', sendTestOtps);
 userRouter.get('/comms-health', getCommsHealth);
+userRouter.get('/db-health', getDbHealth);
 userRouter.post('/reset-password', resetPassword);
 userRouter.post('/reset-password-link', resetPasswordWithToken);
 userRouter.post('/login', login);

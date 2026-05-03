@@ -7,7 +7,11 @@ import { fileURLToPath } from 'url';
 import { connectDB } from './lib/db.js';
 import userRouter from './routes/userRoutes.js';
 import messageRouter from './routes/messageRoutes.js';
+import webrtcRouter from './routes/webrtcRoutes.js';
 import { Server } from 'socket.io';
+import mongoose from "mongoose";
+import Message from "./models/message.js";
+import User from "./models/User.js";
 
 // create express app and http server
 const app = express();
@@ -18,7 +22,7 @@ export const io = new Server(server, {
   cors: {
     origin: '*',
   },
-  transports: ["websocket"],
+  transports: ["websocket", "polling"],
 });
 
 // store online users
@@ -70,7 +74,25 @@ io.on('connection', (socket) => {
 
   socket.on("webrtc-offer", ({ to, offer, callType }) => {
     if (!to || !offer) return;
-    forwardToUser(to, "webrtc-offer", { from: userId, offer, callType });
+
+    const receiverSocketId = userSocketMap[String(to)];
+    if (!receiverSocketId) {
+      // Notify caller immediately.
+      socket.emit("webrtc-offline", { to, callType });
+
+      // Persist a "missed call" as a normal chat message so the callee sees it later.
+      if (mongoose.Types.ObjectId.isValid(userId) && mongoose.Types.ObjectId.isValid(String(to))) {
+        Message.create({
+          senderId: userId,
+          receiverId: String(to),
+          text: `Missed ${callType || "audio"} call`,
+          seen: false,
+        }).catch((err) => console.warn("Failed to save missed call message:", err));
+      }
+      return;
+    }
+
+    io.to(receiverSocketId).emit("webrtc-offer", { from: userId, offer, callType });
   });
 
   socket.on("webrtc-answer", ({ to, answer }) => {
@@ -100,6 +122,15 @@ io.on('connection', (socket) => {
     if (userSocketMap[userId] === socket.id) {
       delete userSocketMap[userId];
     }
+
+    const lastSeen = new Date();
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      User.findByIdAndUpdate(userId, { lastSeen }).catch((err) =>
+        console.warn("Failed to update lastSeen:", err?.message)
+      );
+    }
+    io.emit("userLastSeen", { userId: String(userId), lastSeen });
+
     io.emit('onlineUsers', Object.keys(userSocketMap));
   });
 });
@@ -122,6 +153,7 @@ try {
 // routes setup
 app.use('/api/auth', userRouter);
 app.use('/api/messages', messageRouter);
+app.use('/api/webrtc', webrtcRouter);
 app.use('/api', (req, res) => res.send('Hello World!'));
 
 // start server

@@ -1,8 +1,8 @@
 import React, { createContext, useState, useEffect, useCallback, useMemo } from "react";
+import { API_BASE } from "../config";
 
 export const AuthContext = createContext();
 
-const API = "http://localhost:5000/api";
 const normalizeEmail = (value = "") => String(value).trim().toLowerCase();
 
 export const AuthProvider = ({ children }) => {
@@ -15,7 +15,7 @@ export const AuthProvider = ({ children }) => {
   const fetchUsers = useCallback(async (authToken) => {
     if (!authToken) return;
     try {
-      const res = await fetch(`${API}/messages/users`, {
+      const res = await fetch(`${API_BASE}/messages/users`, {
         headers: {
           Authorization: authToken,
         },
@@ -45,7 +45,7 @@ export const AuthProvider = ({ children }) => {
 
     const checkAuth = async () => {
       try {
-        const res = await fetch(`${API}/auth/check`, {
+        const res = await fetch(`${API_BASE}/auth/check`, {
           headers: {
             Authorization: savedToken,
           },
@@ -82,7 +82,7 @@ export const AuthProvider = ({ children }) => {
       profilePic,
     };
 
-    const res = await fetch(`${API}/auth/signup`, {
+    const res = await fetch(`${API_BASE}/auth/signup`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -99,7 +99,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const verifyEmailOtp = useCallback(async (email, otp) => {
-    const res = await fetch(`${API}/auth/verify-email`, {
+    const res = await fetch(`${API_BASE}/auth/verify-email`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -127,7 +127,7 @@ export const AuthProvider = ({ children }) => {
   }, [fetchUsers]);
 
   const verifyMobileOtp = useCallback(async (mobile, otp) => {
-    const res = await fetch(`${API}/auth/verify-mobile`, {
+    const res = await fetch(`${API_BASE}/auth/verify-mobile`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -155,7 +155,7 @@ export const AuthProvider = ({ children }) => {
   }, [fetchUsers]);
 
   const resendVerificationOtp = useCallback(async (email) => {
-    const res = await fetch(`${API}/auth/resend-verification`, {
+    const res = await fetch(`${API_BASE}/auth/resend-verification`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -172,7 +172,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const resendMobileVerificationOtp = useCallback(async (mobile) => {
-    const res = await fetch(`${API}/auth/resend-mobile-verification`, {
+    const res = await fetch(`${API_BASE}/auth/resend-mobile-verification`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -189,7 +189,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const requestPasswordResetOtp = useCallback(async (email) => {
-    const res = await fetch(`${API}/auth/forgot-password`, {
+    const res = await fetch(`${API_BASE}/auth/forgot-password`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -205,7 +205,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const requestPasswordResetLink = useCallback(async (email) => {
-    const res = await fetch(`${API}/auth/forgot-password/link`, {
+    const res = await fetch(`${API_BASE}/auth/forgot-password/link`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -221,7 +221,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const resendPasswordResetOtp = useCallback(async (email) => {
-    const res = await fetch(`${API}/auth/forgot-password/resend`, {
+    const res = await fetch(`${API_BASE}/auth/forgot-password/resend`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -237,7 +237,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const verifyPasswordResetOtp = useCallback(async (email, otp) => {
-    const res = await fetch(`${API}/auth/verify-reset-otp`, {
+    const res = await fetch(`${API_BASE}/auth/verify-reset-otp`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -253,7 +253,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const resetPassword = useCallback(async (email, otp, password) => {
-    const res = await fetch(`${API}/auth/reset-password`, {
+    const res = await fetch(`${API_BASE}/auth/reset-password`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -269,7 +269,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const resetPasswordWithToken = useCallback(async (tokenValue, password) => {
-    const res = await fetch(`${API}/auth/reset-password-link`, {
+    const res = await fetch(`${API_BASE}/auth/reset-password-link`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -286,7 +286,7 @@ export const AuthProvider = ({ children }) => {
 
   const login = useCallback(async (email, password) => {
     const normalizedEmail = normalizeEmail(email);
-    const res = await fetch(`${API}/auth/login`, {
+    const res = await fetch(`${API_BASE}/auth/login`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -328,7 +328,7 @@ export const AuthProvider = ({ children }) => {
   const blockUser = useCallback(async (targetUserId) => {
     if (!token) throw new Error("Not authenticated");
 
-    const res = await fetch(`${API}/auth/block/${targetUserId}`, {
+    const res = await fetch(`${API_BASE}/auth/block/${targetUserId}`, {
       method: "POST",
       headers: { Authorization: token },
     });
@@ -346,7 +346,7 @@ export const AuthProvider = ({ children }) => {
   const unblockUser = useCallback(async (targetUserId) => {
     if (!token) throw new Error("Not authenticated");
 
-    const res = await fetch(`${API}/auth/block/${targetUserId}`, {
+    const res = await fetch(`${API_BASE}/auth/block/${targetUserId}`, {
       method: "DELETE",
       headers: { Authorization: token },
     });
@@ -371,7 +371,7 @@ export const AuthProvider = ({ children }) => {
       form.append("bio", bio || "");
       form.append("profilePic", profilePicFile, profilePicFile.name || "profile.jpg");
 
-      res = await fetch(`${API}/auth/update-profile`, {
+      res = await fetch(`${API_BASE}/auth/update-profile`, {
         method: "PUT",
         headers: {
           Authorization: token,
@@ -379,7 +379,7 @@ export const AuthProvider = ({ children }) => {
         body: form,
       });
     } else {
-      res = await fetch(`${API}/auth/update-profile`, {
+      res = await fetch(`${API_BASE}/auth/update-profile`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",

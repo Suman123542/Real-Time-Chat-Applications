@@ -3,6 +3,7 @@ import { AuthContext } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { io } from "socket.io-client";
 import UserAvatar from "../components/UserAvatar";
+import { API_BASE, SOCKET_URL, WEBRTC_ICE_SERVERS } from "../config";
 
 const PhoneIcon = ({ size = 18 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -23,9 +24,6 @@ const BellIcon = ({ size = 18 }) => (
   </svg>
 );
 function Chat() {
-  const API = "http://localhost:5000/api";
-  const SOCKET_URL = "http://localhost:5000";
-
   const {
     user,
     users,
@@ -78,6 +76,25 @@ function Chat() {
   const [profileSuccess, setProfileSuccess] = useState("");
   const [showContactPanel, setShowContactPanel] = useState(false);
   const [blockActionLoading, setBlockActionLoading] = useState(false);
+
+  const downloadFile = useCallback(async (url, filename) => {
+    if (!url) return;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("Download failed");
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = filename || "download";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+  }, []);
   const [expandedSharedSections, setExpandedSharedSections] = useState({
     media: false,
     audio: false,
@@ -91,9 +108,15 @@ function Chat() {
     videoEnabled: true,
     startedAt: null,
   });
+  const [callConnection, setCallConnection] = useState({
+    connectionState: "new",
+    iceConnectionState: "new",
+  });
+  const [incomingCall, setIncomingCall] = useState(null); // { from, offer, callType }
   const [remoteStream, setRemoteStream] = useState(null);
   const [localStream, setLocalStream] = useState(null);
   const [callError, setCallError] = useState("");
+  const iceServersRef = useRef(WEBRTC_ICE_SERVERS);
 
   const chatScrollRef = useRef(null);
   const socketRef = useRef(null);
@@ -183,14 +206,14 @@ function Chat() {
   const markOpenChatMessageSeen = useCallback(async (messageId) => {
     if (!token || !messageId) return;
     try {
-      await fetch(`${API}/messages/mark/${messageId}`, {
+      await fetch(`${API_BASE}/messages/mark/${messageId}`, {
         headers: { Authorization: token },
       });
       scheduleUsersRefresh(0);
     } catch (err) {
       console.warn("Unable to mark message as seen:", err);
     }
-  }, [API, token, scheduleUsersRefresh]);
+  }, [token, scheduleUsersRefresh]);
 
   const formatTime = (time) => {
     const d = new Date(time);
@@ -285,6 +308,7 @@ function Chat() {
           online: onlineUserIds.includes(String(u._id)),
           bio: u.bio || "",
           mobile: u.mobile || "",
+          lastSeen: u.lastSeen || null,
           lastMessageAt: u.lastMessageAt || null,
         }))
         .sort((a, b) => {
@@ -310,6 +334,23 @@ function Chat() {
     () => Object.values(unseenMessages || {}).reduce((sum, count) => sum + Number(count || 0), 0),
     [unseenMessages]
   );
+
+  const formatLastSeen = useCallback((dateValue) => {
+    if (!dateValue) return "";
+    const then = new Date(dateValue).getTime();
+    if (!Number.isFinite(then)) return "";
+    const diffMs = Date.now() - then;
+    if (diffMs < 0) return "just now";
+    const diffSec = Math.floor(diffMs / 1000);
+    if (diffSec < 60) return `${diffSec}s ago`;
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `${diffHr}h ago`;
+    const diffDay = Math.floor(diffHr / 24);
+    if (diffDay < 7) return `${diffDay}d ago`;
+    return new Date(then).toLocaleString();
+  }, []);
   const notificationItems = useMemo(
     () =>
       allUsers
@@ -341,6 +382,8 @@ function Chat() {
   }, [remoteStream]);
 
   const cleanupCall = useCallback(() => {
+    setIncomingCall(null);
+    setCallConnection({ connectionState: "new", iceConnectionState: "new" });
     if (disconnectTimerRef.current) {
       clearTimeout(disconnectTimerRef.current);
       disconnectTimerRef.current = null;
@@ -371,9 +414,8 @@ function Chat() {
   }, []);
 
   const ensurePeer = useCallback((targetUserId, callType) => {
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-    });
+    const pc = new RTCPeerConnection({ iceServers: iceServersRef.current });
+    setCallConnection({ connectionState: pc.connectionState, iceConnectionState: pc.iceConnectionState });
     pc.onicecandidate = (event) => {
       if (event.candidate && socketRef.current) {
         socketRef.current.emit("webrtc-ice", {
@@ -381,6 +423,9 @@ function Chat() {
           candidate: event.candidate,
         });
       }
+    };
+    pc.oniceconnectionstatechange = () => {
+      setCallConnection((prev) => ({ ...prev, iceConnectionState: pc.iceConnectionState }));
     };
     pc.ontrack = (event) => {
       const [stream] = event.streams;
@@ -391,6 +436,7 @@ function Chat() {
     };
     pc.onconnectionstatechange = () => {
       const state = pc.connectionState;
+      setCallConnection((prev) => ({ ...prev, connectionState: state }));
       if (state === "failed" || state === "closed") {
         cleanupCall();
         return;
@@ -413,7 +459,40 @@ function Chat() {
     return pc;
   }, [cleanupCall]);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/webrtc/ice`);
+        const data = await res.json().catch(() => ({}));
+        const iceServers = Array.isArray(data?.iceServers) ? data.iceServers : null;
+        if (!cancelled && res.ok && iceServers && iceServers.length) {
+          iceServersRef.current = iceServers;
+        }
+      } catch {
+        // fallback to env-configured ICE servers
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const startLocalMedia = useCallback(async (callType) => {
+    const hostname = window?.location?.hostname || "";
+    const isLocalhost =
+      hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+
+    if (!window.isSecureContext && !isLocalhost) {
+      throw new Error(
+        "Camera/microphone access requires HTTPS. Open the app over https:// (or localhost) to use audio/video calling."
+      );
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error("Camera/microphone not available in this browser/environment.");
+    }
+
     const constraints = {
       audio: true,
       video: callType === "video",
@@ -423,6 +502,41 @@ function Chat() {
     setLocalStream(stream);
     return stream;
   }, []);
+
+  const declineIncomingCall = useCallback(() => {
+    const payload = incomingCall;
+    setIncomingCall(null);
+    if (payload?.from && socketRef.current) {
+      socketRef.current.emit("webrtc-end", { to: payload.from });
+    }
+  }, [incomingCall]);
+
+  const acceptIncomingCall = useCallback(async () => {
+    const payload = incomingCall;
+    if (!payload?.from || !payload?.offer) return;
+    setIncomingCall(null);
+    try {
+      setCallError("");
+      const pc = ensurePeer(payload.from, payload.callType);
+      const stream = await startLocalMedia(payload.callType);
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+      await pc.setRemoteDescription(payload.offer);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socketRef.current?.emit("webrtc-answer", { to: payload.from, answer });
+      setCallState({
+        active: true,
+        type: payload.callType,
+        muted: false,
+        videoEnabled: payload.callType === "video",
+        startedAt: Date.now(),
+      });
+    } catch (err) {
+      console.warn("Failed to accept call:", err);
+      setCallError("Unable to start call. Please check camera/mic permissions.");
+      cleanupCall();
+    }
+  }, [cleanupCall, ensurePeer, incomingCall, startLocalMedia]);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -482,7 +596,7 @@ function Chat() {
 
     const checkApi = async () => {
       try {
-        const res = await fetch(`${API}/auth/check`, {
+        const res = await fetch(`${API_BASE}/auth/check`, {
           headers: { Authorization: token },
         });
         setApiConnected(res.ok);
@@ -576,7 +690,7 @@ function Chat() {
 
     const socket = io(SOCKET_URL, {
       auth: { userId: user._id },
-      transports: ["websocket"],
+      transports: ["websocket", "polling"],
       reconnection: true,
       reconnectionAttempts: 10,
       reconnectionDelay: 800,
@@ -666,6 +780,13 @@ function Chat() {
       scheduleUsersRefresh(0);
     });
 
+    socket.on("userLastSeen", ({ userId, lastSeen }) => {
+      if (String(userId) === String(selectedUserRef.current?.id)) {
+        setSelectedUser((prev) => (prev ? { ...prev, lastSeen } : prev));
+      }
+      scheduleUsersRefresh(0);
+    });
+
     socket.on("typing", ({ from }) => {
       if (String(from) === String(selectedUserRef.current?.id)) {
         setTypingUser(from);
@@ -697,32 +818,7 @@ function Chat() {
       if (sender) {
         setSelectedUser(sender);
       }
-      const accept = window.confirm(`Incoming ${callType} call. Accept?`);
-      if (!accept) {
-        socket.emit("webrtc-end", { to: from });
-        return;
-      }
-      try {
-        setCallError("");
-        const pc = ensurePeer(from, callType);
-        const stream = await startLocalMedia(callType);
-        stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-        await pc.setRemoteDescription(offer);
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        socket.emit("webrtc-answer", { to: from, answer });
-        setCallState({
-          active: true,
-          type: callType,
-          muted: false,
-          videoEnabled: callType === "video",
-          startedAt: Date.now(),
-        });
-      } catch (err) {
-        console.warn("Failed to accept call:", err);
-        setCallError("Unable to start call. Please check camera/mic permissions.");
-        cleanupCall();
-      }
+      setIncomingCall({ from, offer, callType });
     });
 
     socket.on("webrtc-answer", async ({ answer }) => {
@@ -754,6 +850,11 @@ function Chat() {
       cleanupCall();
     });
 
+    socket.on("webrtc-offline", () => {
+      setCallError("User is offline. Missed call notification will be sent.");
+      cleanupCall();
+    });
+
     return () => {
       socket.disconnect();
       socketRef.current = null;
@@ -770,7 +871,7 @@ function Chat() {
     const fetchMessages = async () => {
       if (initialFetchRef.current) setLoadingMessages(true);
       try {
-        const res = await fetch(`${API}/messages/${selectedUser.id}`, {
+        const res = await fetch(`${API_BASE}/messages/${selectedUser.id}`, {
           headers: { Authorization: token },
         });
         const data = await res.json();
@@ -905,7 +1006,7 @@ function Chat() {
       if (replyId) form.append("replyTo", replyId);
 
       const xhr = new XMLHttpRequest();
-      xhr.open("POST", `${API}/messages/send/${selectedUser.id}`);
+      xhr.open("POST", `${API_BASE}/messages/send/${selectedUser.id}`);
       xhr.setRequestHeader("Authorization", token);
 
       xhr.upload.onprogress = (event) => {
@@ -960,7 +1061,7 @@ function Chat() {
     }
 
     try {
-      const res = await fetch(`${API}/messages/send/${selectedUser.id}`, {
+      const res = await fetch(`${API_BASE}/messages/send/${selectedUser.id}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1008,7 +1109,7 @@ function Chat() {
       setEditingMessageId(null);
       setEditText("");
 
-      const res = await fetch(`${API}/messages/${targetId}`, {
+      const res = await fetch(`${API_BASE}/messages/${targetId}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -1054,7 +1155,7 @@ function Chat() {
             : m
         )
       );
-      const res = await fetch(`${API}/messages/${id}`, {
+      const res = await fetch(`${API_BASE}/messages/${id}`, {
         method: "DELETE",
         headers: { Authorization: token },
       });
@@ -1566,12 +1667,16 @@ function Chat() {
                     )}
                   </button>
 
-                  <div className="d-flex align-items-center gap-2">
-                    <div style={{ fontSize: "0.85rem", color: selectedUser.online ? "#7cf7b5" : "#d1d5db" }}>
-                      {selectedUser.online ? "Online" : "Offline"}
-                    </div>
-                    <button
-                      className="call-action-btn"
+                    <div className="d-flex align-items-center gap-2">
+                      <div style={{ fontSize: "0.85rem", color: selectedUser.online ? "#7cf7b5" : "#d1d5db" }}>
+                      {selectedUser.online
+                        ? "Online"
+                        : selectedUser.lastSeen
+                          ? `Last seen ${formatLastSeen(selectedUser.lastSeen)}`
+                          : "Offline"}
+                      </div>
+                      <button
+                        className="call-action-btn"
                       type="button"
                       onClick={() => startCall("audio")}
                       aria-label="Start audio call"
@@ -1667,26 +1772,83 @@ function Chat() {
                                   {msg.fileUrl && (
                                     <div className="mt-2">
                                       {msg.fileType?.startsWith("image") ? (
-                                        <img
-                                          src={msg.fileUrl}
-                                          alt={msg.fileName || "shared"}
-                                          style={{ maxWidth: "220px", borderRadius: "10px" }}
-                                        />
+                                        <div>
+                                          <img
+                                            src={msg.fileUrl}
+                                            alt={msg.fileName || "shared"}
+                                            style={{ maxWidth: "220px", borderRadius: "10px" }}
+                                          />
+                                          <div className="mt-1">
+                                            <button
+                                              type="button"
+                                              className="btn btn-link p-0"
+                                              onClick={() => downloadFile(msg.fileUrl, msg.fileName)}
+                                            >
+                                              Download
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ) : msg.fileType?.startsWith("video") ? (
+                                        <div>
+                                          <video
+                                            src={msg.fileUrl}
+                                            controls
+                                            playsInline
+                                            style={{ maxWidth: "320px", width: "100%", borderRadius: "10px" }}
+                                          />
+                                          <div className="mt-1">
+                                            <button
+                                              type="button"
+                                              className="btn btn-link p-0"
+                                              onClick={() => downloadFile(msg.fileUrl, msg.fileName)}
+                                            >
+                                              Download
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ) : msg.fileType?.startsWith("audio") ? (
+                                        <div>
+                                          <audio src={msg.fileUrl} controls style={{ width: "100%" }} />
+                                          <div className="mt-1">
+                                            <button
+                                              type="button"
+                                              className="btn btn-link p-0"
+                                              onClick={() => downloadFile(msg.fileUrl, msg.fileName)}
+                                            >
+                                              Download
+                                            </button>
+                                          </div>
+                                        </div>
                                       ) : (
-                                        <a href={msg.fileUrl} target="_blank" rel="noopener noreferrer">
+                                        <button
+                                          type="button"
+                                          className="btn btn-link p-0"
+                                          onClick={() => downloadFile(msg.fileUrl, msg.fileName)}
+                                        >
                                           {msg.fileName || "Download file"}
-                                        </a>
+                                        </button>
                                       )}
                                     </div>
                                   )}
 
                                   {msg.image && (
                                     <div className="mt-2">
-                                      <img
-                                        src={msg.image}
-                                        alt="shared"
-                                        style={{ maxWidth: "220px", borderRadius: "10px" }}
-                                      />
+                                      <div>
+                                        <img
+                                          src={msg.image}
+                                          alt="shared"
+                                          style={{ maxWidth: "220px", borderRadius: "10px" }}
+                                        />
+                                        <div className="mt-1">
+                                          <button
+                                            type="button"
+                                            className="btn btn-link p-0"
+                                            onClick={() => downloadFile(msg.image, msg.fileName || "photo")}
+                                          >
+                                            Download
+                                          </button>
+                                        </div>
+                                      </div>
                                     </div>
                                   )}
 
@@ -1992,14 +2154,20 @@ function Chat() {
                 <>
                   <div className="shared-item-grid">
                     {mediaPreviewItems.map((item) => (
-                      <a key={item.id} href={item.url} target="_blank" rel="noopener noreferrer" className="shared-item-card">
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="shared-item-card btn btn-link p-0 text-start"
+                        onClick={() => downloadFile(item.url, item.name)}
+                        title={`Download ${item.name}`}
+                      >
                         {item.type.startsWith("video") ? (
                           <video src={item.url} className="shared-item-thumb" muted playsInline />
                         ) : (
                           <img src={item.url} alt={item.name} className="shared-item-thumb" />
                         )}
                         <span className="shared-item-meta">{item.senderLabel}</span>
-                      </a>
+                      </button>
                     ))}
                   </div>
                   {sharedMedia.length > 4 && (
@@ -2023,10 +2191,15 @@ function Chat() {
                 <>
                   <div className="shared-document-list">
                     {audioPreviewItems.map((item) => (
-                      <a key={item.id} href={item.url} target="_blank" rel="noopener noreferrer" className="shared-document-item">
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="shared-document-item btn btn-link text-start"
+                        onClick={() => downloadFile(item.url, item.name)}
+                      >
                         <span>{item.name}</span>
                         <span className="shared-item-meta">{item.senderLabel}</span>
-                      </a>
+                      </button>
                     ))}
                   </div>
                   {sharedAudio.length > 4 && (
@@ -2050,10 +2223,15 @@ function Chat() {
                 <>
                   <div className="shared-document-list">
                     {documentPreviewItems.map((item) => (
-                      <a key={item.id} href={item.url} target="_blank" rel="noopener noreferrer" className="shared-document-item">
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="shared-document-item btn btn-link text-start"
+                        onClick={() => downloadFile(item.url, item.name)}
+                      >
                         <span>{item.name}</span>
                         <span className="shared-item-meta">{item.senderLabel}</span>
-                      </a>
+                      </button>
                     ))}
                   </div>
                   {sharedDocuments.length > 4 && (
@@ -2077,6 +2255,9 @@ function Chat() {
           <div className="call-card">
             <h5 className="mb-1 text-capitalize">{callState.type} call</h5>
             <p className="mb-2">With {selectedUser?.username}</p>
+            <div className="small text-muted mb-2">
+              Status: {callConnection.connectionState} / ICE: {callConnection.iceConnectionState}
+            </div>
             {selectedUser?.mobile && <div className="small text-muted mb-2">Mobile: {selectedUser.mobile}</div>}
             <div className="call-screen mb-3">
               {callError && (
@@ -2124,6 +2305,24 @@ function Chat() {
               )}
               <button className="btn btn-danger btn-sm" onClick={endCall}>
                 End
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!callState.active && incomingCall && (
+        <div className="call-overlay">
+          <div className="call-card">
+            <h5 className="mb-1 text-capitalize">Incoming {incomingCall.callType} call</h5>
+            <p className="mb-3">From {selectedUser?.username || "User"}</p>
+            {callError && <div className="text-danger mb-2">{callError}</div>}
+            <div className="d-flex justify-content-center gap-2">
+              <button className="btn btn-success btn-sm" onClick={acceptIncomingCall}>
+                Accept
+              </button>
+              <button className="btn btn-danger btn-sm" onClick={declineIncomingCall}>
+                Decline
               </button>
             </div>
           </div>

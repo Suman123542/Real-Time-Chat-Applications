@@ -1,5 +1,39 @@
 # Real-Time-Chat-Applications
 
+## Multi-device (two laptops) real-time + calls
+If chat works only on the same laptop but not across two laptops, it usually means each laptop is connecting to its own `localhost` backend, so Socket.IO presence/messages and WebRTC signaling never reach the other device.
+
+Fix: run **one** backend instance that both laptops can reach (LAN/public IP), and point both frontends to that backend:
+
+- Copy `chat_frontend/.env.example` to `chat_frontend/.env`
+- Set `REACT_APP_BACKEND_ORIGIN` to your backend host, e.g. `http://192.168.1.10:5000`
+- Restart the frontend dev server after changing `.env`
+
+### Audio/Video calls across different networks (different places)
+For WebRTC calls to work reliably across different networks/NATs, you typically need:
+
+- A **TURN server** (coturn) reachable on the public internet
+- The frontend opened on **HTTPS** (camera/mic access is blocked on non-secure origins)
+
+This project reads ICE server config from backend env `WEBRTC_ICE_SERVERS` and exposes it at `GET /api/webrtc/ice`.
+
+## Production deployment (recommended)
+Minimum setup for stable real-time chat + calling:
+
+- Deploy `chat_backend` on a public VPS (port `5000` behind a reverse proxy is fine)
+- Enable HTTPS for the frontend (and ideally for the backend)
+- Run a TURN server (coturn) on the VPS and set `WEBRTC_ICE_SERVERS` in `chat_backend/.env`
+
+### TURN (coturn) quick notes
+- Open firewall ports: `3478` UDP/TCP (+ optional `5349` TCP/TLS) and a UDP relay range (example `49152-65535`).
+- Example `WEBRTC_ICE_SERVERS`:
+  - `WEBRTC_ICE_SERVERS=[{\"urls\":[\"stun:stun.l.google.com:19302\"]},{\"urls\":[\"turn:YOUR_VPS_IP:3478\"],\"username\":\"TURN_USER\",\"credential\":\"TURN_PASS\"}]`
+
+### Frontend env
+- `chat_frontend/.env`:
+  - `REACT_APP_BACKEND_ORIGIN=https://YOUR_DOMAIN_OR_IP:5000` (or your reverse-proxy URL)
+  - Restart frontend after changing `.env`
+
 ## OTP delivery (email + phone)
 OTP is sent from the backend during signup/login verification:
 

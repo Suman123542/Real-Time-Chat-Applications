@@ -1,5 +1,11 @@
 import mongoose from "mongoose";
 
+const sanitizeMongoUriForLogs = (value = "") => {
+  const raw = String(value);
+  // Replace username:password@ with username:***@ (best-effort)
+  return raw.replace(/\/\/([^:/?#]+):([^@]+)@/g, "//$1:***@");
+};
+
 export const connectDB = async () => {
   const rawUri =
     process.env.MONGODB_URL ||
@@ -31,7 +37,13 @@ export const connectDB = async () => {
         }, hardTimeoutMs);
       }),
     ]);
-    console.log("MongoDB connected successfully");
+    const conn = mongoose.connection;
+    console.log(
+      "MongoDB connected successfully",
+      `db=${conn.name}`,
+      `host=${conn.host}`,
+      `uri=${sanitizeMongoUriForLogs(uri)}`
+    );
   } catch (error) {
     console.error("MongoDB connection failed:", error?.message || error);
     throw error;
