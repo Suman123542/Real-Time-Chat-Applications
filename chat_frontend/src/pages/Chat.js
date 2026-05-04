@@ -112,6 +112,7 @@ function Chat() {
     connectionState: "new",
     iceConnectionState: "new",
   });
+  const [webrtcHasTurn, setWebrtcHasTurn] = useState(false);
   const [incomingCall, setIncomingCall] = useState(null); // { from, offer, callType }
   const [remoteStream, setRemoteStream] = useState(null);
   const [localStream, setLocalStream] = useState(null);
@@ -468,6 +469,15 @@ function Chat() {
         const iceServers = Array.isArray(data?.iceServers) ? data.iceServers : null;
         if (!cancelled && res.ok && iceServers && iceServers.length) {
           iceServersRef.current = iceServers;
+          const hasTurn = iceServers.some((server) => {
+            const urls = server?.urls;
+            const list = Array.isArray(urls) ? urls : urls ? [urls] : [];
+            return list.some((u) => {
+              const raw = String(u || "").toLowerCase();
+              return raw.startsWith("turn:") || raw.startsWith("turns:");
+            });
+          });
+          setWebrtcHasTurn(hasTurn);
         }
       } catch {
         // fallback to env-configured ICE servers
@@ -2257,6 +2267,12 @@ function Chat() {
             <p className="mb-2">With {selectedUser?.username}</p>
             <div className="small text-muted mb-2">
               Status: {callConnection.connectionState} / ICE: {callConnection.iceConnectionState}
+            </div>
+            <div className="small text-muted mb-2">
+              Relay:{" "}
+              {webrtcHasTurn
+                ? "TURN enabled"
+                : "STUN only (best on same Wi‑Fi/LAN; cross‑network may fail)"}
             </div>
             {selectedUser?.mobile && <div className="small text-muted mb-2">Mobile: {selectedUser.mobile}</div>}
             <div className="call-screen mb-3">

@@ -70,7 +70,18 @@ export const connectDB = async () => {
       `uri=${sanitizeMongoUriForLogs(uri)}`
     );
   } catch (error) {
-    console.error("MongoDB connection failed:", error?.message || error);
+    const message = error?.message || String(error || "");
+    if (message.toLowerCase().includes("already exists with different case")) {
+      console.error(
+        "MongoDB connection failed: database name differs only by letter case.",
+        `\n- Your cluster already has DB: [Chat-Application] but this app is trying: [${defaultDbName}]`,
+        "\n- Fix by either:",
+        "\n  1) Set MONGODB_DB to exactly match the existing DB name (case-sensitive), OR",
+        "\n  2) Delete/drop the existing DB in MongoDB Atlas, then restart the server."
+      );
+    } else {
+      console.error("MongoDB connection failed:", message);
+    }
     throw error;
   }
 };

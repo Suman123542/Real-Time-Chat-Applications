@@ -7,7 +7,6 @@ import chattrixLogo from "../image/chattrix-logo.svg";
 function Signup() {
   const location = useLocation();
   const verificationState = location.state || {};
-  const showDevOtps = process.env.NODE_ENV !== "production";
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [mobile, setMobile] = useState("");
@@ -18,8 +17,6 @@ function Signup() {
   const [mobileOtp, setMobileOtp] = useState("");
   const [pendingEmail, setPendingEmail] = useState(verificationState.email || "");
   const [pendingMobile, setPendingMobile] = useState(verificationState.mobile || "");
-  const [devOtp, setDevOtp] = useState(verificationState.devEmailOtp || verificationState.devOtp || "");
-  const [devMobileOtp, setDevMobileOtp] = useState(verificationState.devMobileOtp || "");
   const [verificationStep, setVerificationStep] = useState(Boolean(verificationState.startVerification));
   const [emailVerified, setEmailVerified] = useState(Boolean(verificationState.emailVerified));
   const [mobileVerified, setMobileVerified] = useState(Boolean(verificationState.mobileVerified));
@@ -48,8 +45,6 @@ function Signup() {
     if (busy) return;
     setError("");
     setInfo("");
-    setDevOtp("");
-    setDevMobileOtp("");
     setEmailVerified(false);
     setMobileVerified(false);
     setBusy(true);
@@ -65,8 +60,6 @@ function Signup() {
       setPendingMobile(result.mobile || mobile);
       setVerificationStep(true);
       setInfo(result.message || "A verification code has been sent to your email.");
-      setDevOtp(result.devEmailOtp || result.devOtp || "");
-      setDevMobileOtp(result.devMobileOtp || "");
     } catch (err) {
       setError(err.message || "Signup failed");
     } finally {
@@ -133,7 +126,6 @@ function Signup() {
     try {
       const result = await resendVerificationOtp(pendingEmail);
       setInfo(result.message || "A new verification code has been sent to your email.");
-      setDevOtp(result.devEmailOtp || result.devOtp || "");
     } catch (err) {
       setError(err.message || "Unable to resend code");
     } finally {
@@ -150,7 +142,6 @@ function Signup() {
     try {
       const result = await resendMobileVerificationOtp(pendingMobile);
       setInfo(result.message || "A new verification code has been sent to your phone.");
-      setDevMobileOtp(result.devMobileOtp || "");
     } catch (err) {
       setError(err.message || "Unable to resend code");
     } finally {
@@ -186,17 +177,6 @@ function Signup() {
           {info && (
             <div className="alert alert-info text-center signup-error">
               {info}
-            </div>
-          )}
-
-          {showDevOtps && devOtp && (
-            <div className="alert alert-warning text-center signup-error">
-              Development Email OTP: <strong>{devOtp}</strong>
-            </div>
-          )}
-          {showDevOtps && devMobileOtp && (
-            <div className="alert alert-warning text-center signup-error">
-              Development Phone OTP: <strong>{devMobileOtp}</strong>
             </div>
           )}
 

@@ -15,6 +15,8 @@ For WebRTC calls to work reliably across different networks/NATs, you typically 
 - A **TURN server** (coturn) reachable on the public internet
 - The frontend opened on **HTTPS** (camera/mic access is blocked on non-secure origins)
 
+If you **do not** use TURN, calls often work on the **same Wi‑Fi/LAN**, but may fail when users are on **different networks** (mobile data, different ISPs, strict NAT/firewalls).
+
 This project reads ICE server config from backend env `WEBRTC_ICE_SERVERS` and exposes it at `GET /api/webrtc/ice`.
 
 ## Production deployment (recommended)
@@ -48,5 +50,15 @@ Backend requires MongoDB. Set `MONGODB_URL` (or `MONGODB_URI` / `MONGO_URI`) in 
 Optional: set `MONGODB_CONNECT_TIMEOUT_MS=6000` to control how fast the server fails when Mongo is unreachable.
 
 ### Quick health check
+- `GET http://localhost:5000/api/auth/db-health` -> shows Mongo connection status + DB name.
+- `POST /api/auth/test-otp` was removed (no development OTP endpoint).
+
+### Start fresh (delete all users/messages)
+Backend includes a safe reset script that drops the configured database.
+
+- In `chat_backend/.env`, set `MONGODB_DB` to the exact database name you want to use (case-sensitive).
+- Run from `chat_backend/`: `CONFIRM_DB_RESET=<your-db-name> npm run db:reset`
+
+The script refuses to run unless `CONFIRM_DB_RESET` matches `MONGODB_DB`.
 - `GET http://localhost:5000/api/auth/comms-health` → shows whether email/SMS is configured.
 - `POST http://localhost:5000/api/auth/test-otp` (development only) → sends a test OTP to an email/mobile you provide.

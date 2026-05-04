@@ -5,13 +5,10 @@ import loginArtwork from "../image/images (2).jpeg";
 import chattrixLogo from "../image/chattrix-logo.svg";
 
 function Login() {
-  const showDevOtps = process.env.NODE_ENV !== "production";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
-  const [devEmailOtp, setDevEmailOtp] = useState("");
-  const [devMobileOtp, setDevMobileOtp] = useState("");
   const { login } = useContext(AuthContext);
   const navigate = useNavigate();
 
@@ -19,8 +16,6 @@ function Login() {
     e.preventDefault();
     setError("");
     setInfo("");
-    setDevEmailOtp("");
-    setDevMobileOtp("");
 
     try {
       await login(email, password);
@@ -35,8 +30,6 @@ function Login() {
             emailVerified: Boolean(err.emailVerified),
             mobileVerified: Boolean(err.mobileVerified),
             info: err.message,
-            devEmailOtp: err.devEmailOtp || "",
-            devMobileOtp: err.devMobileOtp || "",
           },
         });
         return;
@@ -74,18 +67,6 @@ function Login() {
           {info && (
             <div className="alert alert-info text-center login-error">
               {info}
-            </div>
-          )}
-
-          {showDevOtps && devEmailOtp && (
-            <div className="alert alert-warning text-center login-error">
-              Development Email OTP: <strong>{devEmailOtp}</strong>
-            </div>
-          )}
-
-          {showDevOtps && devMobileOtp && (
-            <div className="alert alert-warning text-center login-error">
-              Development Phone OTP: <strong>{devMobileOtp}</strong>
             </div>
           )}
 

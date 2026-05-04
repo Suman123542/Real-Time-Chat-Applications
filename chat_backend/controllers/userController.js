@@ -7,7 +7,7 @@ import cloudinary, { isCloudinaryConfigured } from "../lib/cloudinary.js";
 import { saveBufferToLocalUpload } from "../lib/localUpload.js";
 import { isEmailTransportConfigured, sendPasswordResetEmail, sendPasswordResetLinkEmail, sendVerificationEmail } from "../lib/mailer.js";
 import { isSmsConfigured, sendVerificationSms } from "../lib/sms.js";
-import { io, userSocketMap } from "../server.js";
+import { getIo, userSocketMap } from "../lib/realtime.js";
 
 const VERIFICATION_TTL_MS = 10 * 60 * 1000;
 const truthy = (value) => {
@@ -15,9 +15,13 @@ const truthy = (value) => {
     return ["1", "true", "yes", "y", "on"].includes(normalized);
 };
 
-const showDevOtp = process.env.SHOW_DEV_OTP != null
-    ? truthy(process.env.SHOW_DEV_OTP)
-    : process.env.NODE_ENV !== "production";
+// Dev OTPs are a security foot-gun. Keep them OFF by default in all environments.
+// To explicitly allow them for local development, set SHOW_DEV_OTP=true.
+const showDevOtp = truthy(process.env.SHOW_DEV_OTP ?? "false");
+
+// When true, signup/reset flows require real email + SMS delivery (no dev OTP fallback).
+// This matches production expectations and prevents "development OTP" from appearing.
+const requireOtpDelivery = truthy(process.env.REQUIRE_OTP_DELIVERY ?? "true");
 
 const parseBase64Image = (value = "") => {
     const match = String(value).match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
@@ -101,17 +105,21 @@ const issueAndSendEmailOtp = async (user) => {
     user.emailVerificationExpiresAt = new Date(Date.now() + VERIFICATION_TTL_MS);
     await user.save();
 
+    if (requireOtpDelivery && !isEmailTransportConfigured) {
+        return { devOtp: null, deliveredByEmail: false, error: "Email service is not configured" };
+    }
+
     if (isEmailTransportConfigured) {
         try {
             await sendVerificationEmail({ email: user.email, name: user.name, otp });
             return { devOtp: null, deliveredByEmail: true };
         } catch (err) {
             console.warn("Email OTP delivery failed:", err?.message || err);
-            return { devOtp: showDevOtp ? otp : null, deliveredByEmail: false };
+            return { devOtp: showDevOtp ? otp : null, deliveredByEmail: false, error: "Email OTP delivery failed" };
         }
     }
 
-    return { devOtp: showDevOtp ? otp : null, deliveredByEmail: false };
+    return { devOtp: showDevOtp ? otp : null, deliveredByEmail: false, error: "Email service is not configured" };
 };
 
 const issueAndSendMobileOtp = async (user) => {
@@ -120,17 +128,21 @@ const issueAndSendMobileOtp = async (user) => {
     user.mobileVerificationExpiresAt = new Date(Date.now() + VERIFICATION_TTL_MS);
     await user.save();
 
+    if (requireOtpDelivery && !isSmsConfigured) {
+        return { devOtp: null, deliveredBySms: false, error: "SMS service is not configured" };
+    }
+
     if (isSmsConfigured) {
         try {
             await sendVerificationSms({ mobile: user.mobile, otp });
             return { devOtp: null, deliveredBySms: true };
         } catch (err) {
             console.warn("SMS OTP delivery failed:", err?.message || err);
-            return { devOtp: showDevOtp ? otp : null, deliveredBySms: false };
+            return { devOtp: showDevOtp ? otp : null, deliveredBySms: false, error: "SMS OTP delivery failed" };
         }
     }
 
-    return { devOtp: showDevOtp ? otp : null, deliveredBySms: false };
+    return { devOtp: showDevOtp ? otp : null, deliveredBySms: false, error: "SMS service is not configured" };
 };
 
 const buildVerificationResponse = ({ emailResult, mobileResult }) => {
@@ -147,17 +159,23 @@ const buildVerificationResponse = ({ emailResult, mobileResult }) => {
     if (messageParts.length) {
         message = `Verification code sent to your ${messageParts.join(" and ")}`;
     } else if (attemptedEmail && attemptedSms) {
-        message = showDevOtp
-            ? "Email/SMS services are not configured, so the development verification codes are shown below"
-            : "Email/SMS services are not configured. Please contact support.";
+        message = requireOtpDelivery
+            ? "Unable to send verification codes. Please try again later."
+            : showDevOtp
+                ? "Email/SMS services are not configured, so the development verification codes are shown below"
+                : "Email/SMS services are not configured. Please contact support.";
     } else if (attemptedEmail) {
-        message = showDevOtp
-            ? "Email service is not configured, so the development verification code is shown below"
-            : "Email service is not configured. Please contact support.";
+        message = requireOtpDelivery
+            ? "Unable to send email verification code. Please try again later."
+            : showDevOtp
+                ? "Email service is not configured, so the development verification code is shown below"
+                : "Email service is not configured. Please contact support.";
     } else if (attemptedSms) {
-        message = showDevOtp
-            ? "SMS service is not configured, so the development verification code is shown below"
-            : "SMS service is not configured. Please contact support.";
+        message = requireOtpDelivery
+            ? "Unable to send SMS verification code. Please try again later."
+            : showDevOtp
+                ? "SMS service is not configured, so the development verification code is shown below"
+                : "SMS service is not configured. Please contact support.";
     } else {
         message = "Verification required";
     }
@@ -187,12 +205,16 @@ const issueAndSendPasswordResetOtp = async (user) => {
     user.resetPasswordVerifiedAt = null;
     await user.save();
 
+    if (requireOtpDelivery && !isEmailTransportConfigured) {
+        return { devOtp: null, deliveredByEmail: false, error: "Email service is not configured" };
+    }
+
     if (isEmailTransportConfigured) {
         await sendPasswordResetEmail({ email: user.email, name: user.name, otp });
         return { devOtp: null, deliveredByEmail: true };
     }
 
-    return { devOtp: otp, deliveredByEmail: false };
+    return { devOtp: showDevOtp ? otp : null, deliveredByEmail: false, error: "Email service is not configured" };
 };
 
 const hasValidResetOtp = (user, otp) => {
@@ -215,6 +237,14 @@ export const signup = async (req, res) => {
         }
         if (mobile.length !== 10) {
             return res.status(400).json({ message: "Mobile number must be exactly 10 digits" });
+        }
+        if (requireOtpDelivery) {
+            if (!isEmailTransportConfigured) {
+                return res.status(503).json({ message: "Email OTP is not configured. Please contact support." });
+            }
+            if (!isSmsConfigured) {
+                return res.status(503).json({ message: "SMS OTP is not configured. Please contact support." });
+            }
         }
 
         const existingMobileUser = await User.findOne({ mobile });
@@ -271,12 +301,37 @@ export const signup = async (req, res) => {
         const emailResult = user.isEmailVerified ? null : await issueAndSendEmailOtp(user);
         const mobileResult = user.isMobileVerified ? null : await issueAndSendMobileOtp(user);
 
+        if (requireOtpDelivery) {
+            const emailOk = user.isEmailVerified || Boolean(emailResult?.deliveredByEmail);
+            const smsOk = user.isMobileVerified || Boolean(mobileResult?.deliveredBySms);
+            if (!emailOk || !smsOk) {
+                return res.status(503).json({
+                    message: "Unable to send verification codes right now. Please try again later.",
+                    deliveredByEmail: Boolean(emailResult?.deliveredByEmail),
+                    deliveredBySms: Boolean(mobileResult?.deliveredBySms),
+                    requiresVerification: true,
+                });
+            }
+        }
+
         return res.status(200).json({
             ...buildVerificationResponse({ emailResult, mobileResult }),
             email: user.email,
             mobile: user.mobile,
         });
     } catch (error) {
+        // Common DB error when trying to sign up with an existing email/mobile.
+        if (error?.code === 11000) {
+            const dupFields = Object.keys(error?.keyPattern || error?.keyValue || {});
+            if (dupFields.includes("email")) {
+                return res.status(400).json({ message: "Email already in use" });
+            }
+            if (dupFields.includes("mobile")) {
+                return res.status(400).json({ message: "Mobile number already in use" });
+            }
+            return res.status(400).json({ message: "User already exists" });
+        }
+
         console.log(error);
         return res.status(500).json({ message: error?.message || "Server error" });
     }
@@ -419,6 +474,10 @@ export const resendVerificationOtp = async (req, res) => {
             return res.status(400).json({ message: "Enter a valid email address" });
         }
 
+        if (requireOtpDelivery && !isEmailTransportConfigured) {
+            return res.status(503).json({ message: "Email OTP is not configured. Please contact support." });
+        }
+
         const user = await findUserByEmail(email);
         if (!user) {
             return res.status(404).json({ message: "User not found" });
@@ -428,13 +487,13 @@ export const resendVerificationOtp = async (req, res) => {
         }
 
         const emailResult = await issueAndSendEmailOtp(user);
+        if (requireOtpDelivery && !emailResult.deliveredByEmail) {
+            return res.status(503).json({ message: "Unable to send email verification code. Please try again later." });
+        }
         return res.status(200).json({
             message: emailResult.deliveredByEmail
                 ? "Verification code resent successfully"
-                : showDevOtp
-                    ? "Email service is not configured, so the development verification code is shown below"
-                    : "Email service is not configured. Please contact support.",
-            devEmailOtp: showDevOtp && !emailResult.deliveredByEmail ? emailResult.devOtp : null,
+                : "Unable to send email verification code. Please try again later.",
         });
     } catch (error) {
         console.log(error);
@@ -453,6 +512,10 @@ export const resendMobileVerificationOtp = async (req, res) => {
             return res.status(400).json({ message: "Mobile number must be exactly 10 digits" });
         }
 
+        if (requireOtpDelivery && !isSmsConfigured) {
+            return res.status(503).json({ message: "SMS OTP is not configured. Please contact support." });
+        }
+
         const user = await User.findOne({ mobile });
         if (!user) {
             return res.status(404).json({ message: "User not found" });
@@ -462,13 +525,13 @@ export const resendMobileVerificationOtp = async (req, res) => {
         }
 
         const mobileResult = await issueAndSendMobileOtp(user);
+        if (requireOtpDelivery && !mobileResult.deliveredBySms) {
+            return res.status(503).json({ message: "Unable to send SMS verification code. Please try again later." });
+        }
         return res.status(200).json({
             message: mobileResult.deliveredBySms
                 ? "Verification code resent successfully"
-                : showDevOtp
-                    ? "SMS service is not configured, so the development verification code is shown below"
-                    : "SMS service is not configured. Please contact support.",
-            devMobileOtp: showDevOtp && !mobileResult.deliveredBySms ? mobileResult.devOtp : null,
+                : "Unable to send SMS verification code. Please try again later.",
         });
     } catch (error) {
         console.log(error);
@@ -487,6 +550,10 @@ export const requestPasswordResetOtp = async (req, res) => {
             return res.status(400).json({ message: "Enter a valid email address" });
         }
 
+        if (requireOtpDelivery && !isEmailTransportConfigured) {
+            return res.status(503).json({ message: "Email OTP is not configured. Please contact support." });
+        }
+
         const user = await findUserByEmail(email);
         if (!user) {
             return res.status(404).json({ message: "User not found" });
@@ -495,15 +562,15 @@ export const requestPasswordResetOtp = async (req, res) => {
             return res.status(400).json({ message: "Please verify your email before resetting the password" });
         }
 
-        const { devOtp, deliveredByEmail } = await issueAndSendPasswordResetOtp(user);
+        const { deliveredByEmail } = await issueAndSendPasswordResetOtp(user);
+        if (requireOtpDelivery && !deliveredByEmail) {
+            return res.status(503).json({ message: "Unable to send password reset code. Please try again later." });
+        }
         return res.status(200).json({
             message: deliveredByEmail
                 ? "A password reset code has been sent to your email"
-                : showDevOtp
-                    ? "Email service is not configured, so the development verification code is shown below"
-                    : "Email service is not configured. Please contact support.",
+                : "Unable to send password reset code. Please try again later.",
             email: user.email,
-            devOtp: showDevOtp && !deliveredByEmail ? devOtp : null,
         });
     } catch (error) {
         console.log(error);
@@ -522,6 +589,10 @@ export const resendPasswordResetOtp = async (req, res) => {
             return res.status(400).json({ message: "Enter a valid email address" });
         }
 
+        if (requireOtpDelivery && !isEmailTransportConfigured) {
+            return res.status(503).json({ message: "Email OTP is not configured. Please contact support." });
+        }
+
         const user = await findUserByEmail(email);
         if (!user) {
             return res.status(404).json({ message: "User not found" });
@@ -530,15 +601,15 @@ export const resendPasswordResetOtp = async (req, res) => {
             return res.status(400).json({ message: "Please verify your email before resetting the password" });
         }
 
-        const { devOtp, deliveredByEmail } = await issueAndSendPasswordResetOtp(user);
+        const { deliveredByEmail } = await issueAndSendPasswordResetOtp(user);
+        if (requireOtpDelivery && !deliveredByEmail) {
+            return res.status(503).json({ message: "Unable to send password reset code. Please try again later." });
+        }
         return res.status(200).json({
             message: deliveredByEmail
                 ? "Password reset code resent successfully"
-                : showDevOtp
-                    ? "Email service is not configured, so the development verification code is shown below"
-                    : "Email service is not configured. Please contact support.",
+                : "Unable to send password reset code. Please try again later.",
             email: user.email,
-            devOtp: showDevOtp && !deliveredByEmail ? devOtp : null,
         });
     } catch (error) {
         console.log(error);
@@ -726,7 +797,8 @@ export const updateProfile = async (req, res) => {
 
         const userToReturn = sanitizeUser(updatedUser);
 
-        io.emit("userProfileUpdated", {
+        const io = getIo();
+        io?.emit("userProfileUpdated", {
             _id: String(userToReturn._id),
             name: userToReturn.name,
             bio: userToReturn.bio || "",
@@ -803,55 +875,6 @@ export const resetPasswordWithToken = async (req, res) => {
     }
 };
 
-export const sendTestOtps = async (req, res) => {
-    if (process.env.NODE_ENV === "production") {
-        return res.status(403).json({ message: "Test OTP endpoint is disabled in production" });
-    }
-
-    const email = normalizeEmail(req.body.email);
-    const mobile = normalizeMobile(req.body.mobile);
-    const otp = String(req.body.otp || createOtp());
-
-    try {
-        const results = { deliveredByEmail: false, deliveredBySms: false };
-
-        if (email) {
-            if (!isValidEmail(email)) {
-                return res.status(400).json({ message: "Enter a valid email address" });
-            }
-            if (!isEmailTransportConfigured) {
-                return res.status(400).json({ message: "Email service is not configured" });
-            }
-            await sendVerificationEmail({ email, name: "there", otp });
-            results.deliveredByEmail = true;
-        }
-
-        if (mobile) {
-            if (mobile.length !== 10) {
-                return res.status(400).json({ message: "Mobile number must be exactly 10 digits" });
-            }
-            if (!isSmsConfigured) {
-                return res.status(400).json({ message: "SMS service is not configured" });
-            }
-            await sendVerificationSms({ mobile, otp });
-            results.deliveredBySms = true;
-        }
-
-        if (!email && !mobile) {
-            return res.status(400).json({ message: "Email or mobile is required" });
-        }
-
-        return res.status(200).json({
-            message: "Test OTP sent",
-            otp,
-            ...results,
-        });
-    } catch (error) {
-        console.log(error);
-        return res.status(500).json({ message: error?.message || "Server error" });
-    }
-};
-
 export const getCommsHealth = async (req, res) => {
     return res.status(200).json({
         emailConfigured: Boolean(isEmailTransportConfigured),
@@ -893,15 +916,16 @@ export const blockUser = async (req, res) => {
         const requesterSocketId = userSocketMap[String(userId)];
         const targetSocketId = userSocketMap[String(targetUserId)];
 
+        const io = getIo();
         if (requesterSocketId) {
-            io.to(requesterSocketId).emit("blockStatusChanged", {
+            io?.to(requesterSocketId).emit("blockStatusChanged", {
                 userId: String(targetUserId),
                 blocked: true,
             });
         }
 
         if (targetSocketId) {
-            io.to(targetSocketId).emit("blockStatusChanged", {
+            io?.to(targetSocketId).emit("blockStatusChanged", {
                 userId: String(userId),
                 blockedByOther: true,
             });
@@ -936,15 +960,16 @@ export const unblockUser = async (req, res) => {
         const requesterSocketId = userSocketMap[String(userId)];
         const targetSocketId = userSocketMap[String(targetUserId)];
 
+        const io = getIo();
         if (requesterSocketId) {
-            io.to(requesterSocketId).emit("blockStatusChanged", {
+            io?.to(requesterSocketId).emit("blockStatusChanged", {
                 userId: String(targetUserId),
                 blocked: false,
             });
         }
 
         if (targetSocketId) {
-            io.to(targetSocketId).emit("blockStatusChanged", {
+            io?.to(targetSocketId).emit("blockStatusChanged", {
                 userId: String(userId),
                 blockedByOther: false,
             });

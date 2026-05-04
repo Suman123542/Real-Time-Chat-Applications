@@ -2,7 +2,7 @@ import Message from "../models/message.js";
 import User from "../models/User.js";
 import cloudinary, { isCloudinaryConfigured } from "../lib/cloudinary.js";
 import { saveBufferToLocalUpload } from "../lib/localUpload.js";
-import { io, userSocketMap } from "../server.js";
+import { getIo, userSocketMap } from "../lib/realtime.js";
 
 const toIdString = (value) => String(value || "");
 
@@ -127,7 +127,8 @@ export const getMessages = async (req, res) => {
 
         const senderSocketId = userSocketMap[String(selectedUserId)];
         if (senderSocketId) {
-            io.to(senderSocketId).emit("messagesSeen", {
+            const io = getIo();
+            io?.to(senderSocketId).emit("messagesSeen", {
                 by: String(myId),
                 forChatWith: String(selectedUserId),
             });
@@ -161,7 +162,8 @@ export const markMessageAsSeen = async (req, res) => {
 
         const senderSocketId = userSocketMap[String(message.senderId)];
         if (senderSocketId) {
-            io.to(senderSocketId).emit("messagesSeen", {
+            const io = getIo();
+            io?.to(senderSocketId).emit("messagesSeen", {
                 by: me,
                 forChatWith: String(message.senderId),
             });
@@ -264,7 +266,8 @@ export const sendMessage = async (req, res) => {
 
         const receiverSocketId = userSocketMap[receiverId];
         if (receiverSocketId) {
-            io.to(receiverSocketId).emit("newMessage", newMessage);
+            const io = getIo();
+            io?.to(receiverSocketId).emit("newMessage", newMessage);
         }
 
         return res.json({ success: true, newMessage });
@@ -298,7 +301,8 @@ export const editMessage = async (req, res) => {
 
         const receiverSocketId = userSocketMap[String(message.receiverId)];
         if (receiverSocketId) {
-            io.to(receiverSocketId).emit("messageUpdated", message);
+            const io = getIo();
+            io?.to(receiverSocketId).emit("messageUpdated", message);
         }
         return res.status(200).json({ message: "Message updated", updatedMessage: message });
     } catch (error) {
@@ -330,7 +334,8 @@ export const deleteMessage = async (req, res) => {
 
         const receiverSocketId = userSocketMap[String(message.receiverId)];
         if (receiverSocketId) {
-            io.to(receiverSocketId).emit("messageDeleted", { id: String(message._id) });
+            const io = getIo();
+            io?.to(receiverSocketId).emit("messageDeleted", { id: String(message._id) });
         }
         return res.status(200).json({ message: "Message deleted", deletedId: String(message._id) });
     } catch (error) {

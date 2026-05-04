@@ -302,8 +302,6 @@ export const AuthProvider = ({ children }) => {
       err.mobile = data.mobile || "";
       err.emailVerified = Boolean(data.emailVerified);
       err.mobileVerified = Boolean(data.mobileVerified);
-      err.devEmailOtp = data.devEmailOtp || data.devOtp || "";
-      err.devMobileOtp = data.devMobileOtp || "";
       throw err;
     }
 

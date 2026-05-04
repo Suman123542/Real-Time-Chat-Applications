@@ -12,21 +12,23 @@ import { Server } from 'socket.io';
 import mongoose from "mongoose";
 import Message from "./models/message.js";
 import User from "./models/User.js";
+import { setIo, userSocketMap } from "./lib/realtime.js";
 
 // create express app and http server
 const app = express();
 const server = http.createServer(app);
 
 // socket.io setup
-export const io = new Server(server, {
+const io = new Server(server, {
   cors: {
     origin: '*',
   },
   transports: ["websocket", "polling"],
 });
+setIo(io);
 
 // store online users
-export const userSocketMap = {}; // {userId: socketId}
+// `userSocketMap` lives in `lib/realtime.js` so controllers can access it without circular imports.
 
 // socket.io connection handler
 io.on('connection', (socket) => {
