@@ -44,6 +44,11 @@ const createOtp = () => String(randomInt(100000, 1000000));
 const hashOtp = (otp) => createHash("sha256").update(String(otp)).digest("hex");
 
 const escapeRegex = (value = "") => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const hasActiveEmailVerificationOtp = (user) => Boolean(
+    user?.emailVerificationCode &&
+    user?.emailVerificationExpiresAt &&
+    user.emailVerificationExpiresAt > new Date()
+);
 
 const findUserByEmail = async (email) => {
     // Allow case-insensitive lookup for older records that may have stored mixed-case emails.
@@ -190,6 +195,21 @@ const buildVerificationResponse = ({ emailResult, mobileResult }) => {
     };
 };
 
+const buildExistingEmailVerificationResponse = (user) => ({
+    message: hasActiveEmailVerificationOtp(user)
+        ? "Verification already sent. Please check your email or use resend."
+        : "Email verification is required. Please use resend to get a new code.",
+    requiresVerification: true,
+    deliveredByEmail: false,
+    deliveredBySms: false,
+    devEmailOtp: null,
+    devMobileOtp: null,
+    email: user.email,
+    mobile: user.mobile,
+    emailVerified: Boolean(user.isEmailVerified),
+    mobileVerified: Boolean(user.isMobileVerified),
+});
+
 const finalizeVerificationIfReady = (user) => {
     // Signup/login require email verification only.
     if (user.isEmailVerified) {
@@ -254,27 +274,7 @@ export const signup = async (req, res) => {
         if (existingUser?.isEmailVerified) {
             return res.status(400).json({ message: "User already exists" });
         }
-        if (existingUser && !existingUser.isEmailVerified) {
-            const now = new Date();
-            const emailOtpActive = Boolean(
-                existingUser.emailVerificationCode &&
-                existingUser.emailVerificationExpiresAt &&
-                existingUser.emailVerificationExpiresAt > now
-            );
-
-            if (emailOtpActive) {
-                return res.status(200).json({
-                    message: "Verification already sent. Please check your email or use resend.",
-                    requiresVerification: true,
-                    deliveredByEmail: false,
-                    deliveredBySms: false,
-                    devEmailOtp: null,
-                    devMobileOtp: null,
-                    email: existingUser.email,
-                    mobile: existingUser.mobile,
-                });
-            }
-        }
+        const emailOtpActive = hasActiveEmailVerificationOtp(existingUser);
 
         const hashedPassword = await argon2.hash(password);
         const profilePicUrl = existingUser?.profilePic || await prepareProfilePic(profilePic);
@@ -290,6 +290,11 @@ export const signup = async (req, res) => {
         user.bio = bio || existingUser?.bio || "";
         user.isEmailVerified = Boolean(existingUser?.isEmailVerified && normalizeEmail(previousEmail) === email);
         user.isMobileVerified = Boolean(existingUser?.isMobileVerified && normalizeMobile(previousMobile) === mobile);
+
+        if (!user.isEmailVerified && emailOtpActive) {
+            await user.save();
+            return res.status(200).json(buildExistingEmailVerificationResponse(user));
+        }
 
         const emailResult = user.isEmailVerified ? null : await issueAndSendEmailOtp(user);
         const mobileResult = null;
@@ -704,7 +709,11 @@ export const login = async (req, res) => {
         }
 
         if (!user.isEmailVerified) {
-            const emailResult = user.isEmailVerified ? null : await issueAndSendEmailOtp(user);
+            if (hasActiveEmailVerificationOtp(user)) {
+                return res.status(403).json(buildExistingEmailVerificationResponse(user));
+            }
+
+            const emailResult = await issueAndSendEmailOtp(user);
             const mobileResult = null;
 
             return res.status(403).json({

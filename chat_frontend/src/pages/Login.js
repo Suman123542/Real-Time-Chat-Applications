@@ -9,13 +9,16 @@ function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
+  const [busy, setBusy] = useState(false);
   const { login } = useContext(AuthContext);
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (busy) return;
     setError("");
     setInfo("");
+    setBusy(true);
 
     try {
       await login(email, password);
@@ -36,6 +39,8 @@ function Login() {
       }
 
       setError(err.message || "Invalid email or password");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -97,8 +102,8 @@ function Login() {
               </Link>
             </div>
 
-            <button className="login-submit" type="submit">
-              Login
+            <button className="login-submit" type="submit" disabled={busy}>
+              {busy ? "Please wait..." : "Login"}
             </button>
           </form>
 
