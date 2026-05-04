@@ -3,7 +3,7 @@ import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { AuthContext } from "../context/AuthContext";
 import { io } from "socket.io-client";
 import UserAvatar from "../components/UserAvatar";
-import { API_BASE, SOCKET_URL, WEBRTC_ICE_SERVERS } from "../config";
+import { API_BASE, SOCKET_URL, WEBRTC_ICE_SERVERS, resolveBackendUrl } from "../config";
 
 const PhoneIcon = ({ size = 18 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -58,6 +58,7 @@ function MobileChat() {
   const [remoteStream, setRemoteStream] = useState(null);
   const [localStream, setLocalStream] = useState(null);
   const [callError, setCallError] = useState("");
+  const [remotePlaybackBlocked, setRemotePlaybackBlocked] = useState(false);
   const iceServersRef = useRef(WEBRTC_ICE_SERVERS);
   const [showContactPanel, setShowContactPanel] = useState(false);
   const [expandedSharedSections, setExpandedSharedSections] = useState({
@@ -84,9 +85,10 @@ function MobileChat() {
   }, []);
 
   const downloadFile = useCallback(async (url, filename) => {
-    if (!url) return;
+    const fileUrl = resolveBackendUrl(url);
+    if (!fileUrl) return;
     try {
-      const res = await fetch(url);
+      const res = await fetch(fileUrl);
       if (!res.ok) throw new Error("Download failed");
       const blob = await res.blob();
       const objectUrl = URL.createObjectURL(blob);
@@ -98,13 +100,30 @@ function MobileChat() {
       a.remove();
       URL.revokeObjectURL(objectUrl);
     } catch (err) {
-      window.open(url, "_blank", "noopener,noreferrer");
+      window.open(fileUrl, "_blank", "noopener,noreferrer");
     }
   }, []);
 
   const renderAvatar = (profilePic, name, size = 40) => (
     <UserAvatar profilePic={profilePic} name={name} size={size} />
   );
+
+  const attachMediaStream = useCallback((element, stream) => {
+    if (!element || !stream) return;
+    if (element.srcObject !== stream) {
+      element.srcObject = stream;
+    }
+    const playPromise = element.play?.();
+    if (playPromise?.catch) {
+      playPromise.catch(() => setRemotePlaybackBlocked(true));
+    }
+  }, []);
+
+  const resumeRemotePlayback = useCallback(() => {
+    setRemotePlaybackBlocked(false);
+    remoteVideoRef.current?.play?.().catch?.(() => setRemotePlaybackBlocked(true));
+    remoteAudioRef.current?.play?.().catch?.(() => setRemotePlaybackBlocked(true));
+  }, []);
 
   const socketRef = useRef(null);
   const selectedUserRef = useRef(null);
@@ -149,19 +168,13 @@ function MobileChat() {
   }, [selectedUser]);
 
   useEffect(() => {
-    if (localVideoRef.current && localStream) {
-      localVideoRef.current.srcObject = localStream;
-    }
-  }, [localStream]);
+    attachMediaStream(localVideoRef.current, localStream);
+  }, [attachMediaStream, callState.active, callState.type, localStream]);
 
   useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
-      remoteVideoRef.current.srcObject = remoteStream;
-    }
-    if (remoteAudioRef.current && remoteStream) {
-      remoteAudioRef.current.srcObject = remoteStream;
-    }
-  }, [remoteStream]);
+    attachMediaStream(remoteVideoRef.current, remoteStream);
+    attachMediaStream(remoteAudioRef.current, remoteStream);
+  }, [attachMediaStream, callState.active, callState.type, remoteStream]);
 
   const cleanupCall = useCallback(() => {
     setIncomingCall(null);
@@ -186,10 +199,11 @@ function MobileChat() {
     }
     setLocalStream(null);
     setRemoteStream(null);
+    setRemotePlaybackBlocked(false);
     setCallState({ active: false, type: null });
   }, []);
 
-  const ensurePeer = useCallback((targetUserId) => {
+  const ensurePeer = useCallback((targetUserId, callType) => {
     const pc = new RTCPeerConnection({ iceServers: iceServersRef.current });
     setCallConnection({ connectionState: pc.connectionState, iceConnectionState: pc.iceConnectionState });
     pc.onicecandidate = (event) => {
@@ -208,7 +222,13 @@ function MobileChat() {
       if (stream) {
         remoteStreamRef.current = stream;
         setRemoteStream(stream);
+        return;
       }
+      if (!remoteStreamRef.current) {
+        remoteStreamRef.current = new MediaStream();
+      }
+      remoteStreamRef.current.addTrack(event.track);
+      setRemoteStream(remoteStreamRef.current);
     };
     pc.onconnectionstatechange = () => {
       const state = pc.connectionState;
@@ -302,7 +322,7 @@ function MobileChat() {
     setIncomingCall(null);
     try {
       setCallError("");
-      const pc = ensurePeer(payload.from);
+      const pc = ensurePeer(payload.from, payload.callType);
       const stream = await startLocalMedia(payload.callType);
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
       await pc.setRemoteDescription(payload.offer);
@@ -562,7 +582,7 @@ function MobileChat() {
           const normalizedType = String(type || "").toLowerCase();
           return {
             id: msg._id,
-            url: msg.fileUrl || msg.image,
+            url: resolveBackendUrl(msg.fileUrl || msg.image),
             name: msg.fileName || msg.text || "Shared file",
             type: normalizedType,
             createdAt: msg.createdAt,
@@ -715,7 +735,7 @@ function MobileChat() {
     setCallError("");
     (async () => {
       try {
-        const pc = ensurePeer(targetId);
+        const pc = ensurePeer(targetId, callType);
         const stream = await startLocalMedia(callType);
         stream.getTracks().forEach((track) => pc.addTrack(track, stream));
         const offer = await pc.createOffer();
@@ -817,7 +837,7 @@ function MobileChat() {
   };
 
   return (
-    <div className="chat-bg vh-100 d-flex flex-column">
+    <div className="chat-bg mobile-chat-page d-flex flex-column">
       <div className="mobile-chat-header text-white p-3 d-flex align-items-center justify-content-between">
         <div className="d-flex align-items-center flex-grow-1 min-w-0 me-2 overflow-hidden">
           <button
@@ -939,7 +959,7 @@ function MobileChat() {
                               {msg.fileType && msg.fileType.startsWith("image") ? (
                                 <div>
                                   <img
-                                    src={msg.fileUrl}
+                                    src={resolveBackendUrl(msg.fileUrl)}
                                     alt={msg.fileName}
                                     style={{ maxWidth: "200px", borderRadius: "10px" }}
                                   />
@@ -956,7 +976,7 @@ function MobileChat() {
                               ) : msg.fileType && msg.fileType.startsWith("video") ? (
                                 <div>
                                   <video
-                                    src={msg.fileUrl}
+                                    src={resolveBackendUrl(msg.fileUrl)}
                                     controls
                                     playsInline
                                     style={{ maxWidth: "320px", width: "100%", borderRadius: "10px" }}
@@ -973,7 +993,7 @@ function MobileChat() {
                                 </div>
                               ) : msg.fileType && msg.fileType.startsWith("audio") ? (
                                 <div>
-                                  <audio src={msg.fileUrl} controls style={{ width: "100%" }} />
+                                  <audio src={resolveBackendUrl(msg.fileUrl)} controls style={{ width: "100%" }} />
                                   <div className="mt-1">
                                     <button
                                       type="button"
@@ -1000,7 +1020,7 @@ function MobileChat() {
                             <div className="mt-2">
                               <div>
                                 <img
-                                  src={msg.image}
+                                  src={resolveBackendUrl(msg.image)}
                                   alt="shared"
                                   style={{ maxWidth: "200px", borderRadius: "10px" }}
                                 />
@@ -1045,7 +1065,7 @@ function MobileChat() {
         )}
       </div>
 
-      <div className="input-group p-2">
+      <div className="input-group p-2 mobile-message-bar">
         <input
           type="text"
           className="form-control"
@@ -1247,22 +1267,29 @@ function MobileChat() {
                   <video
                     ref={remoteVideoRef}
                     autoPlay
+                    muted
                     playsInline
-                    style={{ width: "100%", height: "100%", borderRadius: "12px", background: "#0f172a" }}
+                    style={{ width: "100%", height: "min(48vh, 320px)", borderRadius: "12px", background: "#0f172a", objectFit: "cover" }}
                   />
+                  <audio ref={remoteAudioRef} autoPlay playsInline />
                   <video
                     ref={localVideoRef}
                     autoPlay
                     muted
                     playsInline
-                    style={{ width: "100%", height: "140px", borderRadius: "12px", background: "#0f172a" }}
+                    style={{ width: "100%", height: "140px", borderRadius: "12px", background: "#0f172a", objectFit: "cover" }}
                   />
                 </div>
               ) : (
                 <div>
                   <div className="mb-2">Audio call in progress</div>
-                  <audio ref={remoteAudioRef} autoPlay />
+                  <audio ref={remoteAudioRef} autoPlay playsInline />
                 </div>
+              )}
+              {remotePlaybackBlocked && (
+                <button className="btn btn-light btn-sm mt-2" type="button" onClick={resumeRemotePlayback}>
+                  Enable sound
+                </button>
               )}
             </div>
             <button className="btn btn-danger btn-sm" onClick={endCall}>

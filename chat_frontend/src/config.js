@@ -1,8 +1,5 @@
 const getDefaultBackendOrigin = () => {
-  if (typeof window === "undefined") return "http://localhost:5000";
-  const protocol = window.location.protocol || "http:";
-  const hostname = window.location.hostname || "localhost";
-  return `${protocol}//${hostname}:5000`;
+  return "https://real-time-chat-applications-nyjr.onrender.com"
 };
 
 export const BACKEND_ORIGIN =
@@ -13,6 +10,30 @@ export const API_BASE =
 
 export const SOCKET_URL =
   (process.env.REACT_APP_SOCKET_URL || "").trim() || BACKEND_ORIGIN;
+
+export const resolveBackendUrl = (value = "") => {
+  const raw = String(value || "").trim();
+  if (!raw || raw.startsWith("data:") || raw.startsWith("blob:")) return raw;
+
+  if (raw.startsWith("/")) {
+    return `${BACKEND_ORIGIN}${raw}`;
+  }
+
+  try {
+    const parsed = new URL(raw);
+    const isLocalBackend =
+      ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname) &&
+      (!parsed.port || parsed.port === "5000");
+
+    if (isLocalBackend) {
+      return `${BACKEND_ORIGIN}${parsed.pathname}${parsed.search}${parsed.hash}`;
+    }
+  } catch {
+    return raw;
+  }
+
+  return raw;
+};
 
 const defaultIceServers = [{ urls: "stun:stun.l.google.com:19302" }];
 
@@ -33,4 +54,3 @@ const parseIceServers = (raw) => {
 export const WEBRTC_ICE_SERVERS = parseIceServers(
   process.env.REACT_APP_WEBRTC_ICE_SERVERS
 );
-

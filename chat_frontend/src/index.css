@@ -1429,6 +1429,40 @@ button:hover {
 .mobile-chat-header {
   background: linear-gradient(135deg, #0f766e 0%, #2563eb 100%);
   box-shadow: 0 12px 24px rgba(15, 23, 42, 0.22);
+  position: sticky;
+  top: 0;
+  z-index: 1200;
+  flex-shrink: 0;
+}
+
+.mobile-chat-page {
+  height: 100vh;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+@supports (height: 100dvh) {
+  .mobile-chat-page {
+    height: 100dvh;
+    min-height: 100dvh;
+  }
+}
+
+.mobile-chat-page .chat-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.mobile-message-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 1100;
+  flex-shrink: 0;
+  background: rgba(15, 23, 42, 0.96);
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
 }
 
 .mobile-back-btn {
