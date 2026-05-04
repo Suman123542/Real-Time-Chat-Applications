@@ -6,7 +6,12 @@ const smtpHost = sanitizeEnv(process.env.SMTP_HOST);
 const smtpPort = Number(sanitizeEnv(process.env.SMTP_PORT) || 587);
 const smtpUser = sanitizeEnv(process.env.SMTP_USER);
 const smtpPass = sanitizeEnv(process.env.SMTP_PASS);
-const smtpFrom = sanitizeEnv(process.env.SMTP_FROM || smtpUser);
+const configuredSmtpFrom = sanitizeEnv(process.env.SMTP_FROM || "");
+const hasEmailAddress = (value = "") => /[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+/.test(String(value));
+const smtpFrom = hasEmailAddress(configuredSmtpFrom)
+  ? configuredSmtpFrom
+  : `Chattrix <${smtpUser}>`;
+const smtpTimeoutMs = Number(sanitizeEnv(process.env.SMTP_TIMEOUT_MS) || 8000);
 
 export const isEmailTransportConfigured = Boolean(smtpHost && smtpPort && smtpUser && smtpPass && smtpFrom);
 
@@ -22,6 +27,9 @@ const getTransporter = () => {
       host: smtpHost,
       port: smtpPort,
       secure: smtpPort === 465,
+      connectionTimeout: smtpTimeoutMs,
+      greetingTimeout: smtpTimeoutMs,
+      socketTimeout: smtpTimeoutMs,
       auth: {
         user: smtpUser,
         pass: smtpPass,
@@ -70,6 +78,12 @@ export const sendPasswordResetEmail = async ({ email, name, otp }) => {
       </div>
     `,
   });
+};
+
+export const verifyEmailTransport = async () => {
+  const transport = getTransporter();
+  await transport.verify();
+  return true;
 };
 
 export const sendPasswordResetLinkEmail = async ({ email, name, resetLink }) => {

@@ -5,7 +5,7 @@ import User from "../models/User.js";
 import argon2 from "argon2";
 import cloudinary, { isCloudinaryConfigured } from "../lib/cloudinary.js";
 import { saveBufferToLocalUpload } from "../lib/localUpload.js";
-import { isEmailTransportConfigured, sendPasswordResetEmail, sendPasswordResetLinkEmail, sendVerificationEmail } from "../lib/mailer.js";
+import { isEmailTransportConfigured, sendPasswordResetEmail, sendPasswordResetLinkEmail, sendVerificationEmail, verifyEmailTransport } from "../lib/mailer.js";
 import { isSmsConfigured, sendVerificationSms } from "../lib/sms.js";
 import { getIo, userSocketMap } from "../lib/realtime.js";
 
@@ -210,6 +210,19 @@ const buildExistingEmailVerificationResponse = (user) => ({
     mobileVerified: Boolean(user.isMobileVerified),
 });
 
+const buildPendingEmailVerificationResponse = (user, message) => ({
+    message,
+    requiresVerification: true,
+    deliveredByEmail: false,
+    deliveredBySms: false,
+    devEmailOtp: null,
+    devMobileOtp: null,
+    email: user.email,
+    mobile: user.mobile,
+    emailVerified: Boolean(user.isEmailVerified),
+    mobileVerified: Boolean(user.isMobileVerified),
+});
+
 const finalizeVerificationIfReady = (user) => {
     // Signup/login require email verification only.
     if (user.isEmailVerified) {
@@ -302,12 +315,12 @@ export const signup = async (req, res) => {
         if (requireOtpDelivery) {
             const emailOk = user.isEmailVerified || Boolean(emailResult?.deliveredByEmail);
             if (!emailOk) {
-                return res.status(503).json({
-                    message: "Unable to send verification code right now. Please try again later.",
-                    deliveredByEmail: Boolean(emailResult?.deliveredByEmail),
-                    deliveredBySms: false,
-                    requiresVerification: true,
-                });
+                return res.status(200).json(
+                    buildPendingEmailVerificationResponse(
+                        user,
+                        "Verification code requested. If it does not arrive soon, use resend."
+                    )
+                );
             }
         }
 
@@ -877,8 +890,20 @@ export const resetPasswordWithToken = async (req, res) => {
 };
 
 export const getCommsHealth = async (req, res) => {
+    let emailReady = false;
+    let emailError = null;
+    if (isEmailTransportConfigured) {
+        try {
+            emailReady = await verifyEmailTransport();
+        } catch (err) {
+            emailError = err?.code || err?.responseCode || err?.message || "Email transport verification failed";
+        }
+    }
+
     return res.status(200).json({
         emailConfigured: Boolean(isEmailTransportConfigured),
+        emailReady,
+        emailError,
         smsConfigured: Boolean(isSmsConfigured),
         environment: process.env.NODE_ENV || "development",
     });
