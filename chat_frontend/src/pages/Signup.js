@@ -14,16 +14,13 @@ function Signup() {
   const [profilePic, setProfilePic] = useState("");
   const [profileFileName, setProfileFileName] = useState("");
   const [otp, setOtp] = useState("");
-  const [mobileOtp, setMobileOtp] = useState("");
   const [pendingEmail, setPendingEmail] = useState(verificationState.email || "");
-  const [pendingMobile, setPendingMobile] = useState(verificationState.mobile || "");
   const [verificationStep, setVerificationStep] = useState(Boolean(verificationState.startVerification));
   const [emailVerified, setEmailVerified] = useState(Boolean(verificationState.emailVerified));
-  const [mobileVerified, setMobileVerified] = useState(Boolean(verificationState.mobileVerified));
   const [info, setInfo] = useState(verificationState.info || "");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const { signup, verifyEmailOtp, verifyMobileOtp, resendVerificationOtp, resendMobileVerificationOtp } = useContext(AuthContext);
+  const { signup, verifyEmailOtp, resendVerificationOtp } = useContext(AuthContext);
   const navigate = useNavigate();
 
   const handleImage = (e) => {
@@ -46,7 +43,6 @@ function Signup() {
     setError("");
     setInfo("");
     setEmailVerified(false);
-    setMobileVerified(false);
     setBusy(true);
 
     try {
@@ -57,7 +53,6 @@ function Signup() {
 
       const result = await signup(username.trim(), normalizedEmail, password, mobile, profilePic);
       setPendingEmail(result.email || normalizedEmail);
-      setPendingMobile(result.mobile || mobile);
       setVerificationStep(true);
       setInfo(result.message || "A verification code has been sent to your email.");
     } catch (err) {
@@ -84,32 +79,8 @@ function Signup() {
         return;
       }
 
-      setInfo(result?.message || "Email verified. Please verify your phone.");
-    } catch (err) {
-      setError(err.message || "Verification failed");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleVerifyMobile = async (e) => {
-    e.preventDefault();
-    if (busy) return;
-    setError("");
-    setInfo("");
-    setBusy(true);
-
-    try {
-      const result = await verifyMobileOtp(pendingMobile, mobileOtp);
-      setMobileVerified(true);
-      setMobileOtp("");
-
-      if (result?.token) {
-        navigate("/chat");
-        return;
-      }
-
-      setInfo(result?.message || "Phone verified. Please verify your email.");
+      // Backend should return a token once email is verified.
+      setInfo(result?.message || "Email verified successfully.");
     } catch (err) {
       setError(err.message || "Verification failed");
     } finally {
@@ -126,22 +97,6 @@ function Signup() {
     try {
       const result = await resendVerificationOtp(pendingEmail);
       setInfo(result.message || "A new verification code has been sent to your email.");
-    } catch (err) {
-      setError(err.message || "Unable to resend code");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleResendMobile = async () => {
-    if (busy) return;
-    setError("");
-    setInfo("");
-    setBusy(true);
-
-    try {
-      const result = await resendMobileVerificationOtp(pendingMobile);
-      setInfo(result.message || "A new verification code has been sent to your phone.");
     } catch (err) {
       setError(err.message || "Unable to resend code");
     } finally {
@@ -276,36 +231,6 @@ function Signup() {
 
                   <button className="signup-secondary-btn" type="button" onClick={handleResend} disabled={busy}>
                     {busy ? "Please wait..." : "Resend Email Code"}
-                  </button>
-                </form>
-              )}
-
-              {mobileVerified ? (
-                <div className="alert alert-success text-center signup-error">Phone verified.</div>
-              ) : (
-                <form onSubmit={handleVerifyMobile} className="signup-form">
-                  <div className="signup-helper-text">
-                    Enter the 6-digit code sent to <strong>{pendingMobile}</strong>
-                  </div>
-
-                  <input
-                    type="text"
-                    className="signup-input"
-                    placeholder="Phone OTP"
-                    inputMode="numeric"
-                    pattern="[0-9]{6}"
-                    maxLength={6}
-                    required
-                    value={mobileOtp}
-                    onChange={(e) => setMobileOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                  />
-
-                  <button className="signup-submit" type="submit">
-                    {busy ? "Verifying..." : "Verify Phone"}
-                  </button>
-
-                  <button className="signup-secondary-btn" type="button" onClick={handleResendMobile} disabled={busy}>
-                    {busy ? "Please wait..." : "Resend Phone Code"}
                   </button>
                 </form>
               )}

@@ -1723,6 +1723,10 @@ function Chat() {
                       const avatarSrc = isMine ? user?.profilePic : selectedUser?.profilePic;
                       const status = getMessageStatus(msg);
                       const replied = getReplyMessage(msg);
+                      const missedCallMatch =
+                        typeof msg.text === "string"
+                          ? msg.text.trim().match(/^Missed\s+(audio|video)\s+call$/i)
+                          : null;
 
                       return (
                         <React.Fragment key={msg._id || `${msg.senderId}-${msg.createdAt}`}>
@@ -1777,7 +1781,14 @@ function Chat() {
                                 </div>
                               ) : (
                                 <>
-                                  {msg.text && <div>{msg.text}</div>}
+                                  {missedCallMatch ? (
+                                    <div className="d-flex align-items-center gap-2">
+                                      <span className="badge bg-danger">Missed call</span>
+                                      <span className="text-capitalize">{missedCallMatch[1]} call</span>
+                                    </div>
+                                  ) : (
+                                    msg.text && <div>{msg.text}</div>
+                                  )}
 
                                   {msg.fileUrl && (
                                     <div className="mt-2">

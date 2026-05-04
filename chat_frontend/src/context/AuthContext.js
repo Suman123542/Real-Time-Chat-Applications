@@ -126,34 +126,6 @@ export const AuthProvider = ({ children }) => {
     return data;
   }, [fetchUsers]);
 
-  const verifyMobileOtp = useCallback(async (mobile, otp) => {
-    const res = await fetch(`${API_BASE}/auth/verify-mobile`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ mobile, otp }),
-    });
-
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(data.message || "Verification failed");
-    }
-
-    setUser(data.user);
-
-    if (data.token) {
-      setToken(data.token);
-      localStorage.setItem("token", data.token);
-      await fetchUsers(data.token);
-    } else {
-      setToken(null);
-      localStorage.removeItem("token");
-    }
-
-    return data;
-  }, [fetchUsers]);
-
   const resendVerificationOtp = useCallback(async (email) => {
     const res = await fetch(`${API_BASE}/auth/resend-verification`, {
       method: "POST",
@@ -161,23 +133,6 @@ export const AuthProvider = ({ children }) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ email: normalizeEmail(email) }),
-    });
-
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(data.message || "Unable to resend verification code");
-    }
-
-    return data;
-  }, []);
-
-  const resendMobileVerificationOtp = useCallback(async (mobile) => {
-    const res = await fetch(`${API_BASE}/auth/resend-mobile-verification`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ mobile }),
     });
 
     const data = await res.json().catch(() => ({}));
@@ -409,9 +364,7 @@ export const AuthProvider = ({ children }) => {
       token,
       signup,
       verifyEmailOtp,
-      verifyMobileOtp,
       resendVerificationOtp,
-      resendMobileVerificationOtp,
       requestPasswordResetOtp,
       requestPasswordResetLink,
       resendPasswordResetOtp,
@@ -426,7 +379,7 @@ export const AuthProvider = ({ children }) => {
       unblockUser,
       updateProfile,
     }),
-    [user, users, unseenMessages, token, signup, verifyEmailOtp, verifyMobileOtp, resendVerificationOtp, resendMobileVerificationOtp, requestPasswordResetOtp, requestPasswordResetLink, resendPasswordResetOtp, verifyPasswordResetOtp, resetPassword, resetPasswordWithToken, login, logout, loading, refreshUsers, blockUser, unblockUser, updateProfile]
+    [user, users, unseenMessages, token, signup, verifyEmailOtp, resendVerificationOtp, requestPasswordResetOtp, requestPasswordResetLink, resendPasswordResetOtp, verifyPasswordResetOtp, resetPassword, resetPasswordWithToken, login, logout, loading, refreshUsers, blockUser, unblockUser, updateProfile]
   );
 
   return (

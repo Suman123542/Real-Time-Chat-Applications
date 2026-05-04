@@ -191,7 +191,8 @@ const buildVerificationResponse = ({ emailResult, mobileResult }) => {
 };
 
 const finalizeVerificationIfReady = (user) => {
-    if (user.isEmailVerified && user.isMobileVerified) {
+    // Signup/login require email verification only.
+    if (user.isEmailVerified) {
         const token = generateToken(user._id);
         return { verified: true, token };
     }
@@ -242,9 +243,6 @@ export const signup = async (req, res) => {
             if (!isEmailTransportConfigured) {
                 return res.status(503).json({ message: "Email OTP is not configured. Please contact support." });
             }
-            if (!isSmsConfigured) {
-                return res.status(503).json({ message: "SMS OTP is not configured. Please contact support." });
-            }
         }
 
         const existingMobileUser = await User.findOne({ mobile });
@@ -253,25 +251,20 @@ export const signup = async (req, res) => {
         }
 
         const existingUser = await findUserByEmail(email);
-        if (existingUser?.isEmailVerified && existingUser?.isMobileVerified) {
+        if (existingUser?.isEmailVerified) {
             return res.status(400).json({ message: "User already exists" });
         }
-        if (existingUser && (!existingUser.isEmailVerified || !existingUser.isMobileVerified)) {
+        if (existingUser && !existingUser.isEmailVerified) {
             const now = new Date();
             const emailOtpActive = Boolean(
                 existingUser.emailVerificationCode &&
                 existingUser.emailVerificationExpiresAt &&
                 existingUser.emailVerificationExpiresAt > now
             );
-            const mobileOtpActive = Boolean(
-                existingUser.mobileVerificationCode &&
-                existingUser.mobileVerificationExpiresAt &&
-                existingUser.mobileVerificationExpiresAt > now
-            );
 
-            if (emailOtpActive || mobileOtpActive) {
+            if (emailOtpActive) {
                 return res.status(200).json({
-                    message: "Verification already sent. Please check your email/phone or use resend.",
+                    message: "Verification already sent. Please check your email or use resend.",
                     requiresVerification: true,
                     deliveredByEmail: false,
                     deliveredBySms: false,
@@ -299,16 +292,15 @@ export const signup = async (req, res) => {
         user.isMobileVerified = Boolean(existingUser?.isMobileVerified && normalizeMobile(previousMobile) === mobile);
 
         const emailResult = user.isEmailVerified ? null : await issueAndSendEmailOtp(user);
-        const mobileResult = user.isMobileVerified ? null : await issueAndSendMobileOtp(user);
+        const mobileResult = null;
 
         if (requireOtpDelivery) {
             const emailOk = user.isEmailVerified || Boolean(emailResult?.deliveredByEmail);
-            const smsOk = user.isMobileVerified || Boolean(mobileResult?.deliveredBySms);
-            if (!emailOk || !smsOk) {
+            if (!emailOk) {
                 return res.status(503).json({
-                    message: "Unable to send verification codes right now. Please try again later.",
+                    message: "Unable to send verification code right now. Please try again later.",
                     deliveredByEmail: Boolean(emailResult?.deliveredByEmail),
-                    deliveredBySms: Boolean(mobileResult?.deliveredBySms),
+                    deliveredBySms: false,
                     requiresVerification: true,
                 });
             }
@@ -359,7 +351,7 @@ export const verifyEmailOtp = async (req, res) => {
                 user: sanitizeUser(user),
                 token: verified ? token : null,
                 requiresVerification: !verified,
-                message: verified ? "Email already verified" : "Email already verified. Please verify your phone.",
+                message: verified ? "Email already verified" : "Email already verified.",
             });
         }
         if (!user.emailVerificationCode || !user.emailVerificationExpiresAt || user.emailVerificationExpiresAt < new Date()) {
@@ -379,7 +371,7 @@ export const verifyEmailOtp = async (req, res) => {
             user: sanitizeUser(user),
             token: verified ? token : null,
             requiresVerification: !verified,
-            message: verified ? "Email verified successfully" : "Email verified. Please verify your phone.",
+            message: verified ? "Email verified successfully" : "Email verified successfully",
         });
     } catch (error) {
         console.log(error);
@@ -711,9 +703,9 @@ export const login = async (req, res) => {
             return res.status(400).json({ message: "Invalid credentials" });
         }
 
-        if (!user.isEmailVerified || !user.isMobileVerified) {
+        if (!user.isEmailVerified) {
             const emailResult = user.isEmailVerified ? null : await issueAndSendEmailOtp(user);
-            const mobileResult = user.isMobileVerified ? null : await issueAndSendMobileOtp(user);
+            const mobileResult = null;
 
             return res.status(403).json({
                 ...buildVerificationResponse({ emailResult, mobileResult }),

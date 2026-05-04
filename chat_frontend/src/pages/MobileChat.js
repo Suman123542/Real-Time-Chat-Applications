@@ -884,6 +884,10 @@ function MobileChat() {
               i > 0 ? formatDateSeparator(messages[i - 1]?.createdAt) : "";
             const shouldShowDateDivider = currentDateLabel && currentDateLabel !== prevDateLabel;
             const isMine = String(msg.senderId) === String(user?._id);
+            const missedCallMatch =
+              typeof msg.text === "string"
+                ? msg.text.trim().match(/^Missed\s+(audio|video)\s+call$/i)
+                : null;
             return (
               <React.Fragment key={msg._id || `${msg.senderId}-${msg.createdAt || i}`}>
                 {shouldShowDateDivider && (
@@ -922,7 +926,14 @@ function MobileChat() {
                         </div>
                       ) : (
                         <>
-                          {msg.text}
+                          {missedCallMatch ? (
+                            <div className="d-flex align-items-center gap-2">
+                              <span className="badge bg-danger">Missed call</span>
+                              <span className="text-capitalize">{missedCallMatch[1]} call</span>
+                            </div>
+                          ) : (
+                            msg.text
+                          )}
                           {msg.fileUrl && (
                             <div className="mt-2">
                               {msg.fileType && msg.fileType.startsWith("image") ? (
