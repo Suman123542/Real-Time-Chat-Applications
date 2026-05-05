@@ -1559,12 +1559,6 @@ button:hover {
   font-weight: 700;
 }
 
-.call-health-text {
-  font-size: 0.85rem;
-  color: #16a34a;
-  font-weight: 600;
-}
-
 @media (max-width: 420px) {
   .mobile-chat-page {
     --mobile-chat-header-height: 76px;

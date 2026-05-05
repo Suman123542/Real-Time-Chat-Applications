@@ -117,9 +117,15 @@ io.on('connection', (socket) => {
     forwardToUser(to, "webrtc-end", { from: userId });
   });
 
-  socket.on("webrtc-call-ended", async ({ to, callType, startedAt, durationSeconds }) => {
-    if (!to) return;
-    if (!mongoose.Types.ObjectId.isValid(userId) || !mongoose.Types.ObjectId.isValid(String(to))) return;
+  socket.on("webrtc-call-ended", async ({ to, callType, startedAt, durationSeconds }, ack) => {
+    if (!to) {
+      ack?.({ error: "Missing receiver" });
+      return;
+    }
+    if (!mongoose.Types.ObjectId.isValid(userId) || !mongoose.Types.ObjectId.isValid(String(to))) {
+      ack?.({ error: "Invalid call users" });
+      return;
+    }
 
     const normalizedType = callType === "video" ? "video" : "audio";
     const started = Number.isFinite(Number(startedAt)) ? new Date(Number(startedAt)) : new Date();
@@ -142,8 +148,10 @@ io.on('connection', (socket) => {
       const receiverSocketId = userSocketMap[String(to)];
       if (senderSocketId) io.to(senderSocketId).emit("newMessage", message);
       if (receiverSocketId) io.to(receiverSocketId).emit("newMessage", message);
+      ack?.({ message });
     } catch (err) {
       console.warn("Failed to save call message:", err?.message || err);
+      ack?.({ error: "Failed to save call message" });
     }
   });
 

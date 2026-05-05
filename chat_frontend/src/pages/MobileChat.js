@@ -49,7 +49,7 @@ function MobileChat() {
   const [activeMessageActionsId, setActiveMessageActionsId] = useState(null);
   const [socketConnected, setSocketConnected] = useState(false);
   const [callState, setCallState] = useState({ active: false, type: null });
-  const [callConnection, setCallConnection] = useState({
+  const [, setCallConnection] = useState({
     connectionState: "new",
     iceConnectionState: "new",
   });
@@ -356,9 +356,18 @@ function MobileChat() {
 
     const constraints = {
       audio: true,
-      video: callType === "video",
+      video: callType === "video" ? { facingMode: { ideal: "user" } } : false,
     };
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (err) {
+      if (callType !== "video") throw err;
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    }
+    stream.getVideoTracks().forEach((track) => {
+      track.enabled = callType === "video";
+    });
     localStreamRef.current = stream;
     setLocalStream(stream);
     return stream;
@@ -882,12 +891,22 @@ function MobileChat() {
       0,
       Math.round((Date.now() - Number(currentCall.startedAt)) / 1000)
     );
-    socketRef.current?.emit("webrtc-call-ended", {
-      to: targetId,
-      callType: currentCall.type,
-      startedAt: currentCall.startedAt,
-      durationSeconds,
-    });
+    socketRef.current?.emit(
+      "webrtc-call-ended",
+      {
+        to: targetId,
+        callType: currentCall.type,
+        startedAt: currentCall.startedAt,
+        durationSeconds,
+      },
+      (response) => {
+        if (!response?.message) return;
+        setMessages((prev) => {
+          const exists = prev.some((m) => String(m._id) === String(response.message._id));
+          return exists ? prev : [...prev, response.message];
+        });
+      }
+    );
   };
 
   const endCall = () => {
@@ -1412,13 +1431,6 @@ function MobileChat() {
             <h5 className="mb-2">{selectedUser?.username}</h5>
             <div className="call-duration-badge mb-2">
               {formatActiveCallDuration(callSeconds)}
-            </div>
-            <div className="call-health-text mb-3">
-              {callError
-                ? "Issue detected"
-                : callConnection.connectionState === "connected"
-                  ? "No issue"
-                  : "Connecting..."}
             </div>
             <div className="call-screen mb-3">
               {callError && (
