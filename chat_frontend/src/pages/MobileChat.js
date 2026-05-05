@@ -141,6 +141,7 @@ function MobileChat() {
   const remoteAudioRef = useRef(null);
   const allUsersRef = useRef([]);
   const callStateRef = useRef(callState);
+  const pendingIceCandidatesRef = useRef([]);
   const disconnectTimerRef = useRef(null);
   const refreshUsersTimerRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -239,6 +240,7 @@ function MobileChat() {
       clearTimeout(disconnectTimerRef.current);
       disconnectTimerRef.current = null;
     }
+    pendingIceCandidatesRef.current = [];
     if (peerRef.current) {
       peerRef.current.ontrack = null;
       peerRef.current.onicecandidate = null;
@@ -310,6 +312,38 @@ function MobileChat() {
     peerRef.current = pc;
     return pc;
   }, [cleanupCall]);
+
+  const addOrQueueIceCandidate = useCallback(async (candidate) => {
+    const pc = peerRef.current;
+    if (!pc || !candidate) return;
+
+    if (!pc.remoteDescription) {
+      pendingIceCandidatesRef.current.push(candidate);
+      return;
+    }
+
+    try {
+      await pc.addIceCandidate(candidate);
+    } catch (err) {
+      console.warn("Failed to add ICE candidate:", err);
+    }
+  }, []);
+
+  const flushQueuedIceCandidates = useCallback(async () => {
+    const pc = peerRef.current;
+    if (!pc?.remoteDescription) return;
+
+    const queued = pendingIceCandidatesRef.current;
+    pendingIceCandidatesRef.current = [];
+
+    for (const candidate of queued) {
+      try {
+        await pc.addIceCandidate(candidate);
+      } catch (err) {
+        console.warn("Failed to add queued ICE candidate:", err);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -391,6 +425,7 @@ function MobileChat() {
       const stream = await startLocalMedia(payload.callType);
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
       await pc.setRemoteDescription(payload.offer);
+      await flushQueuedIceCandidates();
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       socketRef.current?.emit("webrtc-answer", { to: payload.from, answer });
@@ -402,7 +437,7 @@ function MobileChat() {
       setCallError("Unable to start call. Please check camera/mic permissions.");
       cleanupCall();
     }
-  }, [cleanupCall, ensurePeer, incomingCall, startLocalMedia]);
+  }, [cleanupCall, ensurePeer, flushQueuedIceCandidates, incomingCall, startLocalMedia]);
 
   useEffect(() => {
     if (!routeSelectedUser) return;
@@ -539,6 +574,7 @@ function MobileChat() {
       try {
         if (peerRef.current && answer) {
           await peerRef.current.setRemoteDescription(answer);
+          await flushQueuedIceCandidates();
         }
       } catch (err) {
         console.warn("Failed to apply answer:", err);
@@ -546,13 +582,7 @@ function MobileChat() {
     });
 
     socket.on("webrtc-ice", async ({ candidate }) => {
-      try {
-        if (peerRef.current && candidate) {
-          await peerRef.current.addIceCandidate(candidate);
-        }
-      } catch (err) {
-        console.warn("Failed to add ICE candidate:", err);
-      }
+      await addOrQueueIceCandidate(candidate);
     });
 
     socket.on("webrtc-end", () => {
@@ -575,7 +605,7 @@ function MobileChat() {
       if (refreshUsersTimerRef.current) clearTimeout(refreshUsersTimerRef.current);
       if (messageActionLongPressRef.current) clearTimeout(messageActionLongPressRef.current);
     };
-  }, [user?._id, scheduleUsersRefresh, cleanupCall, ensurePeer, startLocalMedia]);
+  }, [user?._id, scheduleUsersRefresh, cleanupCall, ensurePeer, startLocalMedia, addOrQueueIceCandidate, flushQueuedIceCandidates]);
 
   useEffect(() => {
     if (!selectedUser?.id || !token) return;

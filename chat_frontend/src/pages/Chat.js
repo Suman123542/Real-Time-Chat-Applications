@@ -137,6 +137,7 @@ function Chat() {
   const remoteAudioRef = useRef(null);
   const allUsersRef = useRef([]);
   const callStateRef = useRef(callState);
+  const pendingIceCandidatesRef = useRef([]);
   const disconnectTimerRef = useRef(null);
   const selectedUserRef = useRef(null);
   const messagesRef = useRef([]);
@@ -424,6 +425,7 @@ function Chat() {
       clearTimeout(disconnectTimerRef.current);
       disconnectTimerRef.current = null;
     }
+    pendingIceCandidatesRef.current = [];
     if (peerRef.current) {
       peerRef.current.ontrack = null;
       peerRef.current.onicecandidate = null;
@@ -501,6 +503,38 @@ function Chat() {
     peerRef.current = pc;
     return pc;
   }, [cleanupCall]);
+
+  const addOrQueueIceCandidate = useCallback(async (candidate) => {
+    const pc = peerRef.current;
+    if (!pc || !candidate) return;
+
+    if (!pc.remoteDescription) {
+      pendingIceCandidatesRef.current.push(candidate);
+      return;
+    }
+
+    try {
+      await pc.addIceCandidate(candidate);
+    } catch (err) {
+      console.warn("Failed to add ICE candidate:", err);
+    }
+  }, []);
+
+  const flushQueuedIceCandidates = useCallback(async () => {
+    const pc = peerRef.current;
+    if (!pc?.remoteDescription) return;
+
+    const queued = pendingIceCandidatesRef.current;
+    pendingIceCandidatesRef.current = [];
+
+    for (const candidate of queued) {
+      try {
+        await pc.addIceCandidate(candidate);
+      } catch (err) {
+        console.warn("Failed to add queued ICE candidate:", err);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -582,6 +616,7 @@ function Chat() {
       const stream = await startLocalMedia(payload.callType);
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
       await pc.setRemoteDescription(payload.offer);
+      await flushQueuedIceCandidates();
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       socketRef.current?.emit("webrtc-answer", { to: payload.from, answer });
@@ -599,7 +634,7 @@ function Chat() {
       setCallError("Unable to start call. Please check camera/mic permissions.");
       cleanupCall();
     }
-  }, [cleanupCall, ensurePeer, incomingCall, startLocalMedia]);
+  }, [cleanupCall, ensurePeer, flushQueuedIceCandidates, incomingCall, startLocalMedia]);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -891,6 +926,7 @@ function Chat() {
       try {
         if (peerRef.current && answer) {
           await peerRef.current.setRemoteDescription(answer);
+          await flushQueuedIceCandidates();
         }
       } catch (err) {
         console.warn("Failed to apply answer:", err);
@@ -898,13 +934,7 @@ function Chat() {
     });
 
     socket.on("webrtc-ice", async ({ candidate }) => {
-      try {
-        if (peerRef.current && candidate) {
-          await peerRef.current.addIceCandidate(candidate);
-        }
-      } catch (err) {
-        console.warn("Failed to add ICE candidate:", err);
-      }
+      await addOrQueueIceCandidate(candidate);
     });
 
     socket.on("webrtc-end", () => {
@@ -925,7 +955,7 @@ function Chat() {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [user?._id, scheduleUsersRefresh, markOpenChatMessageSeen, playNotificationSound, cleanupCall, ensurePeer, startLocalMedia]);
+  }, [user?._id, scheduleUsersRefresh, markOpenChatMessageSeen, playNotificationSound, cleanupCall, ensurePeer, startLocalMedia, addOrQueueIceCandidate, flushQueuedIceCandidates]);
 
   useEffect(() => {
     if (!selectedUser || !token) return;
