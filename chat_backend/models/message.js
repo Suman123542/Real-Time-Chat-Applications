@@ -29,6 +29,26 @@ const messageSchema = new mongoose.Schema(
     fileType: {
       type: String,
     },
+    messageType: {
+      type: String,
+      enum: ["text", "call"],
+      default: "text",
+    },
+    callType: {
+      type: String,
+      enum: ["audio", "video"],
+    },
+    callStatus: {
+      type: String,
+      enum: ["completed", "missed"],
+    },
+    callStartedAt: {
+      type: Date,
+    },
+    callDurationSeconds: {
+      type: Number,
+      min: 0,
+    },
     replyTo: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Message",

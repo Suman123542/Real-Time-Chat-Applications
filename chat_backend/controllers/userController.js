@@ -287,10 +287,8 @@ export const signup = async (req, res) => {
         if (existingUser?.isEmailVerified) {
             return res.status(400).json({ message: "User already exists" });
         }
-        const emailOtpActive = hasActiveEmailVerificationOtp(existingUser);
-
         const hashedPassword = await argon2.hash(password);
-        const profilePicUrl = existingUser?.profilePic || await prepareProfilePic(profilePic);
+        const profilePicUrl = existingUser?.profilePic || "";
 
         const user = existingUser || new User({ email });
         const previousEmail = existingUser?.email;
@@ -304,13 +302,17 @@ export const signup = async (req, res) => {
         user.isEmailVerified = Boolean(existingUser?.isEmailVerified && normalizeEmail(previousEmail) === email);
         user.isMobileVerified = Boolean(existingUser?.isMobileVerified && normalizeMobile(previousMobile) === mobile);
 
-        if (!user.isEmailVerified && emailOtpActive) {
-            await user.save();
-            return res.status(200).json(buildExistingEmailVerificationResponse(user));
-        }
-
         const emailResult = user.isEmailVerified ? null : await issueAndSendEmailOtp(user);
         const mobileResult = null;
+
+        if (!existingUser?.profilePic && profilePic) {
+            prepareProfilePic(profilePic)
+                .then((url) => {
+                    if (!url) return null;
+                    return User.findByIdAndUpdate(user._id, { profilePic: url });
+                })
+                .catch((err) => console.warn("Profile upload after signup failed:", err?.message || err));
+        }
 
         if (requireOtpDelivery) {
             const emailOk = user.isEmailVerified || Boolean(emailResult?.deliveredByEmail);

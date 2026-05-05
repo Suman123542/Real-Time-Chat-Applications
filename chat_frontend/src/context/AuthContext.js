@@ -56,7 +56,6 @@ export const AuthProvider = ({ children }) => {
         const data = await res.json();
         setUser(data.user);
         setToken(savedToken);
-        await fetchUsers(savedToken);
       } catch (err) {
         console.warn(err);
         localStorage.removeItem("token");
@@ -117,7 +116,7 @@ export const AuthProvider = ({ children }) => {
     if (data.token) {
       setToken(data.token);
       localStorage.setItem("token", data.token);
-      await fetchUsers(data.token);
+      fetchUsers(data.token);
     } else {
       setToken(null);
       localStorage.removeItem("token");
@@ -263,7 +262,7 @@ export const AuthProvider = ({ children }) => {
     setUser(data.user);
     setToken(data.token);
     localStorage.setItem("token", data.token);
-    await fetchUsers(data.token);
+    fetchUsers(data.token);
     return true;
   }, [fetchUsers]);
 

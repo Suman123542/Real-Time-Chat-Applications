@@ -88,6 +88,11 @@ io.on('connection', (socket) => {
           senderId: userId,
           receiverId: String(to),
           text: `Missed ${callType || "audio"} call`,
+          messageType: "call",
+          callType: callType === "video" ? "video" : "audio",
+          callStatus: "missed",
+          callDurationSeconds: 0,
+          callStartedAt: new Date(),
           seen: false,
         }).catch((err) => console.warn("Failed to save missed call message:", err));
       }
@@ -110,6 +115,36 @@ io.on('connection', (socket) => {
   socket.on("webrtc-end", ({ to }) => {
     if (!to) return;
     forwardToUser(to, "webrtc-end", { from: userId });
+  });
+
+  socket.on("webrtc-call-ended", async ({ to, callType, startedAt, durationSeconds }) => {
+    if (!to) return;
+    if (!mongoose.Types.ObjectId.isValid(userId) || !mongoose.Types.ObjectId.isValid(String(to))) return;
+
+    const normalizedType = callType === "video" ? "video" : "audio";
+    const started = Number.isFinite(Number(startedAt)) ? new Date(Number(startedAt)) : new Date();
+    const duration = Math.max(0, Math.round(Number(durationSeconds) || 0));
+
+    try {
+      const message = await Message.create({
+        senderId: userId,
+        receiverId: String(to),
+        text: `${normalizedType === "video" ? "Video" : "Audio"} call`,
+        messageType: "call",
+        callType: normalizedType,
+        callStatus: "completed",
+        callStartedAt: started,
+        callDurationSeconds: duration,
+        seen: false,
+      });
+
+      const senderSocketId = userSocketMap[String(userId)];
+      const receiverSocketId = userSocketMap[String(to)];
+      if (senderSocketId) io.to(senderSocketId).emit("newMessage", message);
+      if (receiverSocketId) io.to(receiverSocketId).emit("newMessage", message);
+    } catch (err) {
+      console.warn("Failed to save call message:", err?.message || err);
+    }
   });
 
   socket.on("webrtc-busy", ({ to }) => {

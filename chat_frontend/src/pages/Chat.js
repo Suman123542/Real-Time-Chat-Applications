@@ -77,11 +77,16 @@ function Chat() {
   const [showContactPanel, setShowContactPanel] = useState(false);
   const [blockActionLoading, setBlockActionLoading] = useState(false);
 
-  const downloadFile = useCallback(async (url, filename) => {
+  const downloadFile = useCallback(async (url, filename, messageId) => {
     const fileUrl = resolveBackendUrl(url);
     if (!fileUrl) return;
     try {
-      const res = await fetch(fileUrl);
+      const downloadUrl = messageId
+        ? `${API_BASE}/messages/${messageId}/download`
+        : fileUrl;
+      const res = await fetch(downloadUrl, {
+        headers: messageId && token ? { Authorization: token } : undefined,
+      });
       if (!res.ok) throw new Error("Download failed");
       const blob = await res.blob();
       const objectUrl = URL.createObjectURL(blob);
@@ -95,7 +100,7 @@ function Chat() {
     } catch (err) {
       window.open(fileUrl, "_blank", "noopener,noreferrer");
     }
-  }, []);
+  }, [token]);
   const [expandedSharedSections, setExpandedSharedSections] = useState({
     media: false,
     audio: false,
@@ -113,7 +118,8 @@ function Chat() {
     connectionState: "new",
     iceConnectionState: "new",
   });
-  const [webrtcHasTurn, setWebrtcHasTurn] = useState(false);
+  const [callSeconds, setCallSeconds] = useState(0);
+  const [, setWebrtcHasTurn] = useState(false);
   const [incomingCall, setIncomingCall] = useState(null); // { from, offer, callType }
   const [remoteStream, setRemoteStream] = useState(null);
   const [localStream, setLocalStream] = useState(null);
@@ -164,6 +170,22 @@ function Chat() {
   useEffect(() => {
     callStateRef.current = callState;
   }, [callState]);
+
+  useEffect(() => {
+    if (!callState.active) {
+      setCallSeconds(0);
+      return undefined;
+    }
+
+    const updateCallSeconds = () => {
+      const startedAt = Number(callState.startedAt || Date.now());
+      setCallSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    };
+
+    updateCallSeconds();
+    const timer = setInterval(updateCallSeconds, 1000);
+    return () => clearInterval(timer);
+  }, [callState.active, callState.startedAt]);
 
   const playNotificationSound = useCallback(() => {
     try {
@@ -554,13 +576,15 @@ function Chat() {
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       socketRef.current?.emit("webrtc-answer", { to: payload.from, answer });
-      setCallState({
+      const nextCallState = {
         active: true,
         type: payload.callType,
         muted: false,
         videoEnabled: payload.callType === "video",
         startedAt: Date.now(),
-      });
+      };
+      callStateRef.current = nextCallState;
+      setCallState(nextCallState);
     } catch (err) {
       console.warn("Failed to accept call:", err);
       setCallError("Unable to start call. Please check camera/mic permissions.");
@@ -740,13 +764,16 @@ function Chat() {
       const currentSelected = selectedUserRef.current;
       if (
         currentSelected?.id &&
-        String(newMessage.senderId) === String(currentSelected.id)
+        (String(newMessage.senderId) === String(currentSelected.id) ||
+          String(newMessage.receiverId) === String(currentSelected.id))
       ) {
         setMessages((prev) => {
           const exists = prev.some((m) => String(m._id) === String(newMessage._id));
           return exists ? prev : [...prev, newMessage];
         });
-        markOpenChatMessageSeen(newMessage._id);
+        if (String(newMessage.senderId) === String(currentSelected.id)) {
+          markOpenChatMessageSeen(newMessage._id);
+        }
       } else {
         playNotificationSound();
         scheduleUsersRefresh(200);
@@ -1202,6 +1229,62 @@ function Chat() {
     navigate("/");
   };
 
+  const formatCallDurationLabel = (seconds = 0) => {
+    const total = Math.max(0, Math.round(Number(seconds) || 0));
+    if (total < 60) return `${total} sec`;
+    const minutes = Math.floor(total / 60);
+    const remainingSeconds = total % 60;
+    if (!remainingSeconds) return `${minutes} min`;
+    return `${minutes} min ${remainingSeconds} sec`;
+  };
+
+  const formatActiveCallDuration = (seconds = 0) => {
+    const total = Math.max(0, Math.floor(Number(seconds) || 0));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const remainingSeconds = total % 60;
+    const mmss = `${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
+    return hours ? `${hours}:${mmss}` : mmss;
+  };
+
+  const getCallDisplay = (msg) => {
+    if (msg?.messageType === "call") {
+      return {
+        type: msg.callType === "video" ? "video" : "audio",
+        status: msg.callStatus || "completed",
+        duration: Number(msg.callDurationSeconds || 0),
+        startedAt: msg.callStartedAt || msg.createdAt,
+      };
+    }
+
+    const missedCallMatch =
+      typeof msg?.text === "string"
+        ? msg.text.trim().match(/^Missed\s+(audio|video)\s+call$/i)
+        : null;
+    if (!missedCallMatch) return null;
+
+    return {
+      type: missedCallMatch[1].toLowerCase(),
+      status: "missed",
+      duration: 0,
+      startedAt: msg.createdAt,
+    };
+  };
+
+  const emitCallEndedMessage = (targetId) => {
+    const currentCall = callStateRef.current;
+    if (!targetId || !currentCall?.type || !currentCall?.startedAt) return;
+    const durationSeconds = Math.max(
+      0,
+      Math.round((Date.now() - Number(currentCall.startedAt)) / 1000)
+    );
+    socketRef.current?.emit("webrtc-call-ended", {
+      to: targetId,
+      callType: currentCall.type,
+      startedAt: currentCall.startedAt,
+      durationSeconds,
+    });
+  };
 
   const startCall = (type) => {
     if (!selectedUser) return;
@@ -1221,14 +1304,16 @@ function Chat() {
           offer,
           callType,
         });
-        setCallState({
+        const nextCallState = {
           active: true,
           type: callType,
           muted: false,
           videoEnabled: callType === "video",
           startedAt: Date.now(),
           meetingUrl: null,
-        });
+        };
+        callStateRef.current = nextCallState;
+        setCallState(nextCallState);
       } catch (err) {
         console.warn("Failed to start call:", err);
         setCallError("Unable to start call. Please check camera/mic permissions.");
@@ -1240,6 +1325,7 @@ function Chat() {
   const endCall = () => {
     const targetId = selectedUserRef.current?.id;
     if (targetId) {
+      emitCallEndedMessage(targetId);
       socketRef.current?.emit("webrtc-end", { to: targetId });
     }
     cleanupCall();
@@ -1743,10 +1829,7 @@ function Chat() {
                       const avatarSrc = isMine ? user?.profilePic : selectedUser?.profilePic;
                       const status = getMessageStatus(msg);
                       const replied = getReplyMessage(msg);
-                      const missedCallMatch =
-                        typeof msg.text === "string"
-                          ? msg.text.trim().match(/^Missed\s+(audio|video)\s+call$/i)
-                          : null;
+                      const callDisplay = getCallDisplay(msg);
 
                       return (
                         <React.Fragment key={msg._id || `${msg.senderId}-${msg.createdAt}`}>
@@ -1801,10 +1884,22 @@ function Chat() {
                                 </div>
                               ) : (
                                 <>
-                                  {missedCallMatch ? (
-                                    <div className="d-flex align-items-center gap-2">
-                                      <span className="badge bg-danger">Missed call</span>
-                                      <span className="text-capitalize">{missedCallMatch[1]} call</span>
+                                  {callDisplay ? (
+                                    <div className="call-message">
+                                      <div className="d-flex align-items-center gap-2">
+                                        <span className={callDisplay.status === "missed" ? "badge bg-danger" : "badge bg-success"}>
+                                          {callDisplay.status === "missed" ? "Missed call" : "Call"}
+                                        </span>
+                                        <span className="text-capitalize">{callDisplay.type} call</span>
+                                      </div>
+                                      {callDisplay.status === "completed" && (
+                                        <div className="call-message-detail">
+                                          Duration {formatCallDurationLabel(callDisplay.duration)}
+                                        </div>
+                                      )}
+                                      <div className="call-message-detail">
+                                        Started {formatTime(callDisplay.startedAt)}
+                                      </div>
                                     </div>
                                   ) : (
                                     msg.text && <div>{msg.text}</div>
@@ -1823,7 +1918,7 @@ function Chat() {
                                             <button
                                               type="button"
                                               className="btn btn-link p-0"
-                                              onClick={() => downloadFile(msg.fileUrl, msg.fileName)}
+                                              onClick={() => downloadFile(msg.fileUrl, msg.fileName, msg._id)}
                                             >
                                               Download
                                             </button>
@@ -1841,7 +1936,7 @@ function Chat() {
                                             <button
                                               type="button"
                                               className="btn btn-link p-0"
-                                              onClick={() => downloadFile(msg.fileUrl, msg.fileName)}
+                                              onClick={() => downloadFile(msg.fileUrl, msg.fileName, msg._id)}
                                             >
                                               Download
                                             </button>
@@ -1854,7 +1949,7 @@ function Chat() {
                                             <button
                                               type="button"
                                               className="btn btn-link p-0"
-                                              onClick={() => downloadFile(msg.fileUrl, msg.fileName)}
+                                              onClick={() => downloadFile(msg.fileUrl, msg.fileName, msg._id)}
                                             >
                                               Download
                                             </button>
@@ -1864,7 +1959,7 @@ function Chat() {
                                         <button
                                           type="button"
                                           className="btn btn-link p-0"
-                                          onClick={() => downloadFile(msg.fileUrl, msg.fileName)}
+                                          onClick={() => downloadFile(msg.fileUrl, msg.fileName, msg._id)}
                                         >
                                           {msg.fileName || "Download file"}
                                         </button>
@@ -1884,7 +1979,7 @@ function Chat() {
                                           <button
                                             type="button"
                                             className="btn btn-link p-0"
-                                            onClick={() => downloadFile(msg.image, msg.fileName || "photo")}
+                                            onClick={() => downloadFile(msg.image, msg.fileName || "photo", msg._id)}
                                           >
                                             Download
                                           </button>
@@ -2199,7 +2294,7 @@ function Chat() {
                         key={item.id}
                         type="button"
                         className="shared-item-card btn btn-link p-0 text-start"
-                        onClick={() => downloadFile(item.url, item.name)}
+                        onClick={() => downloadFile(item.url, item.name, item.id)}
                         title={`Download ${item.name}`}
                       >
                         {item.type.startsWith("video") ? (
@@ -2236,7 +2331,7 @@ function Chat() {
                         key={item.id}
                         type="button"
                         className="shared-document-item btn btn-link text-start"
-                        onClick={() => downloadFile(item.url, item.name)}
+                        onClick={() => downloadFile(item.url, item.name, item.id)}
                       >
                         <span>{item.name}</span>
                         <span className="shared-item-meta">{item.senderLabel}</span>
@@ -2268,7 +2363,7 @@ function Chat() {
                         key={item.id}
                         type="button"
                         className="shared-document-item btn btn-link text-start"
-                        onClick={() => downloadFile(item.url, item.name)}
+                        onClick={() => downloadFile(item.url, item.name, item.id)}
                       >
                         <span>{item.name}</span>
                         <span className="shared-item-meta">{item.senderLabel}</span>
@@ -2294,18 +2389,17 @@ function Chat() {
       {callState.active && (
         <div className="call-overlay">
           <div className="call-card">
-            <h5 className="mb-1 text-capitalize">{callState.type} call</h5>
-            <p className="mb-2">With {selectedUser?.username}</p>
-            <div className="small text-muted mb-2">
-              Status: {callConnection.connectionState} / ICE: {callConnection.iceConnectionState}
+            <h5 className="mb-3">{selectedUser?.username}</h5>
+            <div className="call-duration-badge mb-2">
+              {formatActiveCallDuration(callSeconds)}
             </div>
-            <div className="small text-muted mb-2">
-              Relay:{" "}
-              {webrtcHasTurn
-                ? "TURN enabled"
-                : "STUN only (best on same Wi‑Fi/LAN; cross‑network may fail)"}
+            <div className="call-health-text mb-3">
+              {callError
+                ? "Issue detected"
+                : callConnection.connectionState === "connected"
+                  ? "No issue"
+                  : "Connecting..."}
             </div>
-            {selectedUser?.mobile && <div className="small text-muted mb-2">Mobile: {selectedUser.mobile}</div>}
             <div className="call-screen mb-3">
               {callError && (
                 <div className="text-danger mb-2">{callError}</div>
@@ -2330,7 +2424,6 @@ function Chat() {
                 </div>
               ) : (
                 <div>
-                  <div className="mb-2">Audio call in progress</div>
                   <audio ref={remoteAudioRef} autoPlay playsInline />
                 </div>
               )}

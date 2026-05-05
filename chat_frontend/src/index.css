@@ -608,6 +608,16 @@ button:hover {
   white-space: nowrap;
 }
 
+.call-message {
+  min-width: 150px;
+}
+
+.call-message-detail {
+  margin-top: 4px;
+  font-size: 12px;
+  opacity: 0.78;
+}
+
 .chat-date-separator {
   width: fit-content;
   margin: 10px auto 12px;
@@ -1441,20 +1451,21 @@ button:hover {
 
 .mobile-chat-page {
   --mobile-chat-header-height: 80px;
-  --mobile-chat-input-height: 66px;
+  --mobile-chat-input-height: 78px;
   position: fixed;
   inset: 0;
-  height: 100vh;
-  min-height: 100vh;
+  height: var(--mobile-visual-height, 100vh);
+  min-height: var(--mobile-visual-height, 100vh);
   overflow: hidden;
   padding-top: var(--mobile-chat-header-height);
   padding-bottom: var(--mobile-chat-input-height);
+  touch-action: manipulation;
 }
 
 @supports (height: 100dvh) {
   .mobile-chat-page {
-    height: 100dvh;
-    min-height: 100dvh;
+    height: var(--mobile-visual-height, 100dvh);
+    min-height: var(--mobile-visual-height, 100dvh);
   }
 }
 
@@ -1463,29 +1474,101 @@ button:hover {
   left: 0;
   right: 0;
   top: var(--mobile-chat-header-height);
-  bottom: var(--mobile-chat-input-height);
+  bottom: calc(var(--mobile-chat-input-height) + var(--mobile-keyboard-offset, 0px));
   height: auto;
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
+  padding-bottom: 14px !important;
 }
 
 .mobile-message-bar {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: var(--mobile-keyboard-offset, 0px);
   z-index: 1100;
   flex-shrink: 0;
   min-height: var(--mobile-chat-input-height);
   background: rgba(15, 23, 42, 0.96);
-  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  padding: 8px 10px max(8px, env(safe-area-inset-bottom));
+  box-shadow: 0 -10px 24px rgba(15, 23, 42, 0.22);
+}
+
+.mobile-message-controls {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.mobile-message-controls .form-control,
+.mobile-message-controls .btn {
+  border-radius: 12px !important;
+  min-height: 42px;
+}
+
+.mobile-message-controls .form-control {
+  min-width: 0;
+}
+
+.mobile-selected-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  max-width: 100%;
+  margin-bottom: 6px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  font-size: 12px;
+}
+
+.mobile-clear-file {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+  line-height: 1;
+}
+
+.mobile-message-time {
+  align-self: flex-end;
+  font-size: 9px;
+  line-height: 1;
+  margin-top: 5px;
+  opacity: 0.68;
+}
+
+.call-duration-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 64px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1e40af;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.call-health-text {
+  font-size: 0.85rem;
+  color: #16a34a;
+  font-weight: 600;
 }
 
 @media (max-width: 420px) {
   .mobile-chat-page {
     --mobile-chat-header-height: 76px;
-    --mobile-chat-input-height: 64px;
+    --mobile-chat-input-height: 76px;
   }
 
   .mobile-chat-header {
@@ -1501,6 +1584,20 @@ button:hover {
 
   .mobile-chat-header .chat-user-trigger small:last-child {
     display: none !important;
+  }
+
+  .mobile-message-bar {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  .mobile-message-controls {
+    gap: 4px;
+  }
+
+  .mobile-message-controls .btn {
+    padding-left: 10px;
+    padding-right: 10px;
   }
 }
 

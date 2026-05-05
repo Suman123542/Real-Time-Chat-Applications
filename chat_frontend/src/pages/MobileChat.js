@@ -53,7 +53,8 @@ function MobileChat() {
     connectionState: "new",
     iceConnectionState: "new",
   });
-  const [webrtcHasTurn, setWebrtcHasTurn] = useState(false);
+  const [callSeconds, setCallSeconds] = useState(0);
+  const [, setWebrtcHasTurn] = useState(false);
   const [incomingCall, setIncomingCall] = useState(null); // { from, offer, callType }
   const [remoteStream, setRemoteStream] = useState(null);
   const [localStream, setLocalStream] = useState(null);
@@ -84,11 +85,16 @@ function MobileChat() {
     return new Date(then).toLocaleString();
   }, []);
 
-  const downloadFile = useCallback(async (url, filename) => {
+  const downloadFile = useCallback(async (url, filename, messageId) => {
     const fileUrl = resolveBackendUrl(url);
     if (!fileUrl) return;
     try {
-      const res = await fetch(fileUrl);
+      const downloadUrl = messageId
+        ? `${API_BASE}/messages/${messageId}/download`
+        : fileUrl;
+      const res = await fetch(downloadUrl, {
+        headers: messageId && token ? { Authorization: token } : undefined,
+      });
       if (!res.ok) throw new Error("Download failed");
       const blob = await res.blob();
       const objectUrl = URL.createObjectURL(blob);
@@ -102,7 +108,7 @@ function MobileChat() {
     } catch (err) {
       window.open(fileUrl, "_blank", "noopener,noreferrer");
     }
-  }, []);
+  }, [token]);
 
   const renderAvatar = (profilePic, name, size = 40) => (
     <UserAvatar profilePic={profilePic} name={name} size={size} />
@@ -138,6 +144,7 @@ function MobileChat() {
   const disconnectTimerRef = useRef(null);
   const refreshUsersTimerRef = useRef(null);
   const fileInputRef = useRef(null);
+  const chatScrollRef = useRef(null);
   const messageActionLongPressRef = useRef(null);
 
   const scheduleUsersRefresh = useCallback((delay = 250) => {
@@ -162,6 +169,55 @@ function MobileChat() {
   useEffect(() => {
     callStateRef.current = callState;
   }, [callState]);
+
+  useEffect(() => {
+    if (!callState.active) {
+      setCallSeconds(0);
+      return undefined;
+    }
+
+    const updateCallSeconds = () => {
+      const startedAt = Number(callState.startedAt || Date.now());
+      setCallSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    };
+
+    updateCallSeconds();
+    const timer = setInterval(updateCallSeconds, 1000);
+    return () => clearInterval(timer);
+  }, [callState.active, callState.startedAt]);
+
+  useEffect(() => {
+    const updateMobileViewport = () => {
+      const viewport = window.visualViewport;
+      const visualHeight = viewport?.height || window.innerHeight;
+      const keyboardOffset = Math.max(
+        0,
+        window.innerHeight - visualHeight - (viewport?.offsetTop || 0)
+      );
+
+      document.documentElement.style.setProperty(
+        "--mobile-visual-height",
+        `${visualHeight}px`
+      );
+      document.documentElement.style.setProperty(
+        "--mobile-keyboard-offset",
+        `${keyboardOffset}px`
+      );
+    };
+
+    updateMobileViewport();
+    window.visualViewport?.addEventListener("resize", updateMobileViewport);
+    window.visualViewport?.addEventListener("scroll", updateMobileViewport);
+    window.addEventListener("resize", updateMobileViewport);
+
+    return () => {
+      window.visualViewport?.removeEventListener("resize", updateMobileViewport);
+      window.visualViewport?.removeEventListener("scroll", updateMobileViewport);
+      window.removeEventListener("resize", updateMobileViewport);
+      document.documentElement.style.removeProperty("--mobile-visual-height");
+      document.documentElement.style.removeProperty("--mobile-keyboard-offset");
+    };
+  }, []);
 
   useEffect(() => {
     selectedUserRef.current = selectedUser;
@@ -329,7 +385,9 @@ function MobileChat() {
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       socketRef.current?.emit("webrtc-answer", { to: payload.from, answer });
-      setCallState({ active: true, type: payload.callType });
+      const nextCallState = { active: true, type: payload.callType, startedAt: Date.now() };
+      callStateRef.current = nextCallState;
+      setCallState(nextCallState);
     } catch (err) {
       console.warn("Failed to accept call:", err);
       setCallError("Unable to start call. Please check camera/mic permissions.");
@@ -418,7 +476,8 @@ function MobileChat() {
       const currentSelected = selectedUserRef.current;
       if (
         currentSelected &&
-        String(newMessage.senderId) === String(currentSelected.id)
+        (String(newMessage.senderId) === String(currentSelected.id) ||
+          String(newMessage.receiverId) === String(currentSelected.id))
       ) {
         setMessages((prev) => {
           const exists = prev.some((m) => String(m._id) === String(newMessage._id));
@@ -538,6 +597,12 @@ function MobileChat() {
     setEditText("");
     setActiveMessageActionsId(null);
   }, [selectedUser?.id, token, scheduleUsersRefresh]);
+
+  useEffect(() => {
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [messages, file, sendError]);
 
   const handleFileChange = (e) => {
     setSendError("");
@@ -745,7 +810,9 @@ function MobileChat() {
           offer,
           callType,
         });
-        setCallState({ active: true, type: callType });
+        const nextCallState = { active: true, type: callType, startedAt: Date.now() };
+        callStateRef.current = nextCallState;
+        setCallState(nextCallState);
       } catch (err) {
         console.warn("Failed to start call:", err);
         setCallError("Unable to start call. Please check camera/mic permissions.");
@@ -754,9 +821,79 @@ function MobileChat() {
     })();
   };
 
+  const formatTime = (time) => {
+    if (!time) return "";
+    return new Date(time)
+      .toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      })
+      .replace("AM", "am")
+      .replace("PM", "pm");
+  };
+
+  const formatCallDurationLabel = (seconds = 0) => {
+    const total = Math.max(0, Math.round(Number(seconds) || 0));
+    if (total < 60) return `${total} sec`;
+    const minutes = Math.floor(total / 60);
+    const remainingSeconds = total % 60;
+    if (!remainingSeconds) return `${minutes} min`;
+    return `${minutes} min ${remainingSeconds} sec`;
+  };
+
+  const formatActiveCallDuration = (seconds = 0) => {
+    const total = Math.max(0, Math.floor(Number(seconds) || 0));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const remainingSeconds = total % 60;
+    const mmss = `${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
+    return hours ? `${hours}:${mmss}` : mmss;
+  };
+
+  const getCallDisplay = (msg) => {
+    if (msg?.messageType === "call") {
+      return {
+        type: msg.callType === "video" ? "video" : "audio",
+        status: msg.callStatus || "completed",
+        duration: Number(msg.callDurationSeconds || 0),
+        startedAt: msg.callStartedAt || msg.createdAt,
+      };
+    }
+
+    const missedCallMatch =
+      typeof msg?.text === "string"
+        ? msg.text.trim().match(/^Missed\s+(audio|video)\s+call$/i)
+        : null;
+    if (!missedCallMatch) return null;
+
+    return {
+      type: missedCallMatch[1].toLowerCase(),
+      status: "missed",
+      duration: 0,
+      startedAt: msg.createdAt,
+    };
+  };
+
+  const emitCallEndedMessage = (targetId) => {
+    const currentCall = callStateRef.current;
+    if (!targetId || !currentCall?.type || !currentCall?.startedAt) return;
+    const durationSeconds = Math.max(
+      0,
+      Math.round((Date.now() - Number(currentCall.startedAt)) / 1000)
+    );
+    socketRef.current?.emit("webrtc-call-ended", {
+      to: targetId,
+      callType: currentCall.type,
+      startedAt: currentCall.startedAt,
+      durationSeconds,
+    });
+  };
+
   const endCall = () => {
     const targetId = selectedUserRef.current?.id;
     if (targetId) {
+      emitCallEndedMessage(targetId);
       socketRef.current?.emit("webrtc-end", { to: targetId });
     }
     cleanupCall();
@@ -892,7 +1029,7 @@ function MobileChat() {
         </div>
       </div>
 
-      <div className="flex-grow-1 p-3 chat-scroll">
+      <div className="flex-grow-1 p-3 chat-scroll" ref={chatScrollRef}>
         {loadingMessages ? (
           <div className="text-center text-muted">Loading messages...</div>
         ) : messages.length === 0 ? (
@@ -904,10 +1041,7 @@ function MobileChat() {
               i > 0 ? formatDateSeparator(messages[i - 1]?.createdAt) : "";
             const shouldShowDateDivider = currentDateLabel && currentDateLabel !== prevDateLabel;
             const isMine = String(msg.senderId) === String(user?._id);
-            const missedCallMatch =
-              typeof msg.text === "string"
-                ? msg.text.trim().match(/^Missed\s+(audio|video)\s+call$/i)
-                : null;
+            const callDisplay = getCallDisplay(msg);
             return (
               <React.Fragment key={msg._id || `${msg.senderId}-${msg.createdAt || i}`}>
                 {shouldShowDateDivider && (
@@ -946,10 +1080,22 @@ function MobileChat() {
                         </div>
                       ) : (
                         <>
-                          {missedCallMatch ? (
-                            <div className="d-flex align-items-center gap-2">
-                              <span className="badge bg-danger">Missed call</span>
-                              <span className="text-capitalize">{missedCallMatch[1]} call</span>
+                          {callDisplay ? (
+                            <div className="call-message">
+                              <div className="d-flex align-items-center gap-2">
+                                <span className={callDisplay.status === "missed" ? "badge bg-danger" : "badge bg-success"}>
+                                  {callDisplay.status === "missed" ? "Missed call" : "Call"}
+                                </span>
+                                <span className="text-capitalize">{callDisplay.type} call</span>
+                              </div>
+                              {callDisplay.status === "completed" && (
+                                <div className="call-message-detail">
+                                  Duration {formatCallDurationLabel(callDisplay.duration)}
+                                </div>
+                              )}
+                              <div className="call-message-detail">
+                                Started {formatTime(callDisplay.startedAt)}
+                              </div>
                             </div>
                           ) : (
                             msg.text
@@ -967,7 +1113,7 @@ function MobileChat() {
                                     <button
                                       type="button"
                                       className="btn btn-link p-0"
-                                      onClick={() => downloadFile(msg.fileUrl, msg.fileName)}
+                                      onClick={() => downloadFile(msg.fileUrl, msg.fileName, msg._id)}
                                     >
                                       Download
                                     </button>
@@ -985,7 +1131,7 @@ function MobileChat() {
                                     <button
                                       type="button"
                                       className="btn btn-link p-0"
-                                      onClick={() => downloadFile(msg.fileUrl, msg.fileName)}
+                                      onClick={() => downloadFile(msg.fileUrl, msg.fileName, msg._id)}
                                     >
                                       Download
                                     </button>
@@ -998,7 +1144,7 @@ function MobileChat() {
                                     <button
                                       type="button"
                                       className="btn btn-link p-0"
-                                      onClick={() => downloadFile(msg.fileUrl, msg.fileName)}
+                                      onClick={() => downloadFile(msg.fileUrl, msg.fileName, msg._id)}
                                     >
                                       Download
                                     </button>
@@ -1008,7 +1154,7 @@ function MobileChat() {
                                 <button
                                   type="button"
                                   className="btn btn-link p-0"
-                                  onClick={() => downloadFile(msg.fileUrl, msg.fileName)}
+                                  onClick={() => downloadFile(msg.fileUrl, msg.fileName, msg._id)}
                                 >
                                   {msg.fileName || "Download file"}
                                 </button>
@@ -1028,7 +1174,7 @@ function MobileChat() {
                                   <button
                                     type="button"
                                     className="btn btn-link p-0"
-                                    onClick={() => downloadFile(msg.image, msg.fileName || "photo")}
+                                    onClick={() => downloadFile(msg.image, msg.fileName || "photo", msg._id)}
                                   >
                                     Download
                                   </button>
@@ -1036,6 +1182,10 @@ function MobileChat() {
                               </div>
                             </div>
                           )}
+                          <div className="message-meta-row mobile-message-time">
+                            <span>{formatTime(msg.createdAt)}</span>
+                            {msg.edited && <span>edited</span>}
+                          </div>
                         </>
                       )}
                     </div>
@@ -1065,7 +1215,25 @@ function MobileChat() {
         )}
       </div>
 
-      <div className="input-group p-2 mobile-message-bar">
+      <div className="mobile-message-bar">
+        {file && (
+          <div className="mobile-selected-file">
+            <span className="text-truncate">{file.name}</span>
+            <button
+              type="button"
+              className="mobile-clear-file"
+              onClick={() => {
+                setFile(null);
+                if (fileInputRef.current) fileInputRef.current.value = "";
+              }}
+              aria-label="Remove selected file"
+            >
+              x
+            </button>
+          </div>
+        )}
+        {sendError && <div className="text-danger small px-1 pb-1">{sendError}</div>}
+        <div className="input-group mobile-message-controls">
         <input
           type="text"
           className="form-control"
@@ -1077,9 +1245,6 @@ function MobileChat() {
           Attach
           <input ref={fileInputRef} type="file" hidden onChange={handleFileChange} />
         </label>
-        {file && (
-          <span className="ms-2 text-white" style={{ fontSize: "0.9rem" }}>{file.name}</span>
-        )}
         {uploadProgress > 0 && uploadProgress < 1 && (
           <div className="progress w-50 ms-2" style={{ height: "0.6rem" }}>
             <div
@@ -1095,8 +1260,8 @@ function MobileChat() {
         <button className="btn btn-primary" onClick={handleSend} disabled={sending}>
           {sending ? "Sending..." : "Send"}
         </button>
+        </div>
       </div>
-      {sendError && <div className="text-danger small px-2 pb-2">{sendError}</div>}
 
       {showContactPanel && selectedUser && (
         <div className="profile-overlay" onClick={() => setShowContactPanel(false)}>
@@ -1149,7 +1314,7 @@ function MobileChat() {
                         key={item.id}
                         type="button"
                         className="shared-item-card btn btn-link p-0 text-start"
-                        onClick={() => downloadFile(item.url, item.name)}
+                        onClick={() => downloadFile(item.url, item.name, item.id)}
                         title={`Download ${item.name}`}
                       >
                         {item.type.startsWith("video") ? (
@@ -1186,7 +1351,7 @@ function MobileChat() {
                         key={item.id}
                         type="button"
                         className="shared-document-item btn btn-link text-start"
-                        onClick={() => downloadFile(item.url, item.name)}
+                        onClick={() => downloadFile(item.url, item.name, item.id)}
                       >
                         <span>{item.name}</span>
                         <span className="shared-item-meta">{item.senderLabel}</span>
@@ -1218,7 +1383,7 @@ function MobileChat() {
                         key={item.id}
                         type="button"
                         className="shared-document-item btn btn-link text-start"
-                        onClick={() => downloadFile(item.url, item.name)}
+                        onClick={() => downloadFile(item.url, item.name, item.id)}
                       >
                         <span>{item.name}</span>
                         <span className="shared-item-meta">{item.senderLabel}</span>
@@ -1244,20 +1409,17 @@ function MobileChat() {
       {callState.active && (
         <div className="call-overlay">
           <div className="call-card">
-            <h5 className="mb-1 text-capitalize">{callState.type} call</h5>
-            <p className="mb-2">With {selectedUser?.username}</p>
-            <div className="small text-muted mb-2">
-              Status: {callConnection.connectionState} / ICE: {callConnection.iceConnectionState}
+            <h5 className="mb-2">{selectedUser?.username}</h5>
+            <div className="call-duration-badge mb-2">
+              {formatActiveCallDuration(callSeconds)}
             </div>
-            <div className="small text-muted mb-2">
-              Relay:{" "}
-              {webrtcHasTurn
-                ? "TURN enabled"
-                : "STUN only (best on same Wi‑Fi/LAN; cross‑network may fail)"}
+            <div className="call-health-text mb-3">
+              {callError
+                ? "Issue detected"
+                : callConnection.connectionState === "connected"
+                  ? "No issue"
+                  : "Connecting..."}
             </div>
-            {selectedUser?.mobile && (
-              <div className="small text-muted mb-2">Mobile: {selectedUser.mobile}</div>
-            )}
             <div className="call-screen mb-3">
               {callError && (
                 <div className="text-danger mb-2">{callError}</div>
@@ -1282,7 +1444,6 @@ function MobileChat() {
                 </div>
               ) : (
                 <div>
-                  <div className="mb-2">Audio call in progress</div>
                   <audio ref={remoteAudioRef} autoPlay playsInline />
                 </div>
               )}

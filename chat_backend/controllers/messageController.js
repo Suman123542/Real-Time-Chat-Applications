@@ -3,6 +3,8 @@ import User from "../models/User.js";
 import cloudinary, { isCloudinaryConfigured } from "../lib/cloudinary.js";
 import { saveBufferToLocalUpload } from "../lib/localUpload.js";
 import { getIo, userSocketMap } from "../lib/realtime.js";
+import fs from "fs/promises";
+import path from "path";
 
 const toIdString = (value) => String(value || "");
 
@@ -174,6 +176,85 @@ export const markMessageAsSeen = async (req, res) => {
     catch (error) {
         console.log(error);
         return res.status(500).json({ message: "Server error" });
+    }
+};
+
+const cleanDownloadName = (value = "download") =>
+    String(value || "download").replace(/[\r\n"]/g, "").trim() || "download";
+
+const getLocalUploadPath = (attachmentUrl = "") => {
+    let pathname = attachmentUrl;
+    try {
+        pathname = new URL(attachmentUrl).pathname;
+    } catch {
+        pathname = String(attachmentUrl || "");
+    }
+
+    if (!pathname.startsWith("/uploads/")) return null;
+
+    const uploadsRoot = path.resolve(process.cwd(), "uploads");
+    const relativePath = pathname.replace(/^\/uploads\//, "");
+    const filePath = path.resolve(uploadsRoot, relativePath);
+
+    if (!filePath.startsWith(uploadsRoot + path.sep)) return null;
+    return filePath;
+};
+
+export const downloadMessageAttachment = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const me = String(req.user._id);
+        const message = await Message.findById(id).lean();
+
+        if (!message || message.deleted) {
+            return res.status(404).json({ message: "Attachment not found" });
+        }
+
+        const isParticipant =
+            String(message.senderId) === me || String(message.receiverId) === me;
+        if (!isParticipant) {
+            return res.status(403).json({ message: "Not allowed" });
+        }
+
+        const attachmentUrl = message.fileUrl || message.image;
+        if (!attachmentUrl) {
+            return res.status(404).json({ message: "Attachment not found" });
+        }
+
+        const fallbackName = message.image ? "photo" : "download";
+        const fileName = cleanDownloadName(message.fileName || fallbackName);
+        const localPath = getLocalUploadPath(attachmentUrl);
+
+        if (localPath) {
+            try {
+                await fs.access(localPath);
+                return res.download(localPath, fileName);
+            } catch {
+                return res.status(410).json({
+                    message: "This file is no longer available on the server. Please ask the sender to resend it.",
+                });
+            }
+        }
+
+        const upstream = await fetch(attachmentUrl);
+        if (!upstream.ok || !upstream.body) {
+            return res.status(410).json({
+                message: "This file is no longer available. Please ask the sender to resend it.",
+            });
+        }
+
+        res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+        res.setHeader("Content-Type", upstream.headers.get("content-type") || message.fileType || "application/octet-stream");
+        const contentLength = upstream.headers.get("content-length");
+        if (contentLength) res.setHeader("Content-Length", contentLength);
+
+        for await (const chunk of upstream.body) {
+            res.write(chunk);
+        }
+        return res.end();
+    } catch (error) {
+        console.log(error);
+        return res.status(500).json({ message: "Download failed" });
     }
 };
 
